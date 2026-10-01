@@ -11,6 +11,9 @@ __pycache__/
 venv/
 .env
 
+# Claude hook diagnostics (raw payloads, may contain conversation text)
+.claude/hooks/.last-payload.json
+
 # Data and outputs
 data/raw/
 data/cache/
