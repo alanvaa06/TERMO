@@ -6,7 +6,10 @@ TERMO is a thermometer, not an autopilot: it does not forecast yields and does n
 
 ## Status
 
-Design phase. No code yet. See [`docs/design/TERMO-diseno-comite.md`](docs/design/TERMO-diseno-comite.md).
+Design phase. No code yet.
+
+- [`docs/design/TERMO-diseno-comite.md`](docs/design/TERMO-diseno-comite.md) — committee design (what and why, plain language)
+- [`docs/design/TERMO-diseno-tecnico.md`](docs/design/TERMO-diseno-tecnico.md) — technical design (features, jump model, traceability, validation protocol, operations)
 
 ## At a glance
 
