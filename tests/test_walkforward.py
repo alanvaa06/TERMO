@@ -11,6 +11,50 @@ from termo.validation.metrics import adjusted_rand
 from termo.validation.walkforward import inertia_labels, refit_cutoffs, run_walkforward
 
 
+class SpyModel:
+    """Stands in for a regime model and tells online reading apart from full decoding."""
+
+    n_states = 2
+
+    def __init__(self, n_train: int) -> None:
+        self._n_train = n_train
+
+    def insample_labels(self) -> np.ndarray:
+        return np.zeros(self._n_train, dtype=int)
+
+    def online_labels(self, features: pd.DataFrame) -> np.ndarray:
+        return np.zeros(len(features), dtype=int)
+
+    def full_labels(self, features: pd.DataFrame) -> np.ndarray:
+        return np.ones(len(features), dtype=int)
+
+
+def test_each_fit_sees_only_its_training_window(data: ExperimentData) -> None:
+    """Rule: nothing is fitted on the block it is about to label."""
+    last_row_seen: list[pd.Timestamp] = []
+    first_row_seen: list[pd.Timestamp] = []
+
+    def spying_fitter(features: pd.DataFrame) -> SpyModel:
+        first_row_seen.append(features.index[0])
+        last_row_seen.append(features.index[-1])
+        return SpyModel(len(features))
+
+    run_walkforward(data.refits, spying_fitter, 2, data.daily_change_10y)
+
+    assert last_row_seen == [refit.cutoff for refit in data.refits]
+    assert set(first_row_seen) == {data.refits[0].features.index[0]}
+    for refit, last in zip(data.refits, last_row_seen, strict=True):
+        assert last < refit.block_end
+
+
+def test_out_of_sample_labels_come_from_the_online_reading(data: ExperimentData) -> None:
+    """Rule: the label of day t may not use days after t, so full decoding is never used."""
+    result = run_walkforward(
+        data.refits, lambda features: SpyModel(len(features)), 2, data.daily_change_10y
+    )
+    assert (result.oos_labels == 0).all()  # the spy's full decoding would give 1
+
+
 def test_cutoffs_step_every_refit_weeks() -> None:
     dates = pd.bdate_range("2000-01-03", "2001-12-31")
     cutoffs = refit_cutoffs(dates, pd.Timestamp("2000-12-31"), 26)

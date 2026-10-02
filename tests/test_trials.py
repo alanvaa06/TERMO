@@ -61,3 +61,28 @@ def test_holdout_opens_once_and_only_for_a_finished_trial(log: TrialLog) -> None
     assert log.holdout_opened()
     with pytest.raises(TrialLogError, match="already been opened"):
         log.open_holdout("jm_k2_lam50")
+
+
+def test_holdout_result_is_recorded_once_and_only_after_opening(log: TrialLog) -> None:
+    register(log)
+    log.record_result("jm_k2_lam50", {"score": 0.1}, TrialStatus.KEPT, "", None)
+    with pytest.raises(TrialLogError, match="has not been opened"):
+        log.record_holdout_result({"passed": True})
+    log.open_holdout("jm_k2_lam50")
+    log.record_holdout_result({"passed": True, "n_weeks": 100})
+    last = log.records()[-1]
+    assert last["kind"] == "holdout_result" and last["passed"] is True and last["n_weeks"] == 100
+    with pytest.raises(TrialLogError, match="already has a result"):
+        log.record_holdout_result({"passed": False})
+
+
+def test_reports_accumulate_and_the_last_one_is_current(log: TrialLog) -> None:
+    assert log.last_report() is None
+    log.record_report({"verdict": "no-go", "final_trial_id": None})
+    log.record_report({"verdict": "go", "final_trial_id": "jm_k2_lam50"})
+    reports = [r for r in log.records() if r["kind"] == "report"]
+    assert [r["verdict"] for r in reports] == ["no-go", "go"]
+    last = log.last_report()
+    assert last is not None and last["final_trial_id"] == "jm_k2_lam50"
+    # Report records are not trials: they never show up as registrations or results.
+    assert log.registrations() == {} and log.results() == {}

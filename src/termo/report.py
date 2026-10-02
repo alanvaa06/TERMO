@@ -97,16 +97,20 @@ def render_markdown(report: CoreReport) -> str:
     return "\n".join(lines)
 
 
-def write_report(report: CoreReport, out_dir: Path) -> None:
-    out_dir.mkdir(parents=True, exist_ok=True)
-    (out_dir / REPORT_MD).write_text(render_markdown(report), encoding="utf-8", newline="\n")
-    payload = {
+def report_payload(report: CoreReport) -> dict[str, Any]:
+    """The report as plain JSON data; the same content goes to the file and to the trial log."""
+    return {
         "verdict": report.verdict.value,
         "final_trial_id": report.final_trial_id,
         "criteria": [asdict(c) for c in report.criteria],
         "notes": list(report.notes),
         "details": report.details,
     }
+
+
+def write_report(report: CoreReport, out_dir: Path) -> None:
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / REPORT_MD).write_text(render_markdown(report), encoding="utf-8", newline="\n")
     (out_dir / REPORT_JSON).write_text(
-        json.dumps(payload, indent=2), encoding="utf-8", newline="\n"
+        json.dumps(report_payload(report), indent=2), encoding="utf-8", newline="\n"
     )

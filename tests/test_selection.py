@@ -58,6 +58,16 @@ def test_winner_has_the_best_score_among_those_passing_duration() -> None:
     assert pick_winner([]) is None
 
 
+def test_winner_needs_positive_stability_and_separation() -> None:
+    """Two negative factors multiply into a positive score; that must not win."""
+    both_negative = candidate(3, 80.0, stability=-0.05, separation=-0.02)
+    barely_good = candidate(2, 80.0, stability=0.8, separation=0.0005)
+    assert both_negative.score > barely_good.score
+    assert pick_winner([both_negative, barely_good]) == barely_good
+    unseparated = candidate(2, 12.0, stability=0.9, separation=-0.01)
+    assert pick_winner([both_negative, unseparated]) is None
+
+
 def test_ftic_compares_only_the_winning_penalty() -> None:
     candidates = [
         candidate(2, 80.0, wcss=9000.0),

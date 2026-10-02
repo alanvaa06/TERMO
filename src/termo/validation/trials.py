@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 HOLDOUT_TRIAL = "holdout"
+REPORT_ENTRY = "report"
 
 
 class TrialLogError(RuntimeError):
@@ -20,7 +21,9 @@ class TrialLogError(RuntimeError):
 class RecordKind(Enum):
     REGISTERED = "registered"
     RESULT = "result"
+    REPORT = "report"
     HOLDOUT_OPENED = "holdout_opened"
+    HOLDOUT_RESULT = "holdout_result"
 
 
 class TrialStatus(Enum):
@@ -130,3 +133,33 @@ class TrialLog:
                 "final_trial_id": final_trial_id,
             }
         )
+
+    def record_holdout_result(self, payload: Mapping[str, Any]) -> None:
+        """The one result of the one holdout evaluation."""
+        if not self.holdout_opened():
+            raise TrialLogError("the holdout has not been opened")
+        if HOLDOUT_TRIAL in self._ids(RecordKind.HOLDOUT_RESULT):
+            raise TrialLogError("the holdout already has a result")
+        self._append(
+            {
+                "kind": RecordKind.HOLDOUT_RESULT.value,
+                "trial_id": HOLDOUT_TRIAL,
+                "at": self.clock(),
+                **dict(payload),
+            }
+        )
+
+    def record_report(self, payload: Mapping[str, Any]) -> None:
+        """Every report built is logged, so a verdict cannot be re-rolled out of sight."""
+        self._append(
+            {
+                "kind": RecordKind.REPORT.value,
+                "trial_id": REPORT_ENTRY,
+                "at": self.clock(),
+                **dict(payload),
+            }
+        )
+
+    def last_report(self) -> dict[str, Any] | None:
+        reports = [r for r in self.records() if r["kind"] == RecordKind.REPORT.value]
+        return reports[-1] if reports else None

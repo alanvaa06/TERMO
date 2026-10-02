@@ -57,10 +57,13 @@ def pbo_cscv(stats: np.ndarray) -> float:
     eta_out = eta_from_stats(np.einsum("cb,nbsk->cnsk", 1.0 - inside, stats))
     winner = eta_in.argmax(axis=1)
     winner_out = eta_out[np.arange(len(splits)), winner]
-    rank = (eta_out <= winner_out[:, None]).sum(axis=1)  # 1 = worst, n_configs = best
-    omega = rank / (n_configs + 1.0)
+    # Mid-rank: configurations that tie with the winner count half. 1 = worst, n_configs = best.
+    below = (eta_out < winner_out[:, None]).sum(axis=1)
+    tied = (eta_out == winner_out[:, None]).sum(axis=1)  # includes the winner itself
+    omega = (below + (tied + 1) / 2.0) / (n_configs + 1.0)
     logit = np.log(omega / (1.0 - omega))
-    return float((logit <= 0.0).mean())
+    # Exactly at the median counts half, so identical configurations give 0.5, not 0 or 1.
+    return float((logit < 0.0).mean() + 0.5 * np.isclose(logit, 0.0).mean())
 
 
 def effective_n(labelings: Sequence[np.ndarray], cut: float) -> int:

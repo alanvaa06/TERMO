@@ -43,6 +43,24 @@ def test_pbo_needs_an_even_number_of_blocks() -> None:
         pbo_cscv(np.zeros((3, 5, 2, 3)))
 
 
+def test_pbo_of_identical_configurations_is_a_coin_flip() -> None:
+    """Choosing among copies of one labeling is no selection at all: neither 0 nor 1."""
+    rng = np.random.default_rng(0)
+    values = rng.normal(size=480)
+    one = block_stats(values, rng.integers(0, 2, size=480), 2, 8)
+    assert pbo_cscv(np.stack([one] * 6)) == pytest.approx(0.5)
+
+
+def test_pbo_does_not_reward_a_duplicated_winner() -> None:
+    rng = np.random.default_rng(1)
+    truth = (np.arange(480) // 20) % 2
+    values = np.where(truth == 1, 5.0, -5.0) + rng.normal(scale=3.0, size=480)
+    good = block_stats(values, truth, 2, 8)
+    noise = [block_stats(values, rng.integers(0, 2, size=480), 2, 8) for _ in range(6)]
+    # The real winner twice: it ties with its copy, and still ranks above every noise config.
+    assert pbo_cscv(np.stack([good, good, *noise])) == 0.0
+
+
 def test_effective_n_counts_distinct_labelings() -> None:
     rng = np.random.default_rng(0)
     a = (np.arange(300) // 30) % 2

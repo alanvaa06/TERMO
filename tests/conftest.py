@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import date
 from typing import TYPE_CHECKING
 
@@ -13,6 +14,23 @@ from termo.config import BootstrapConfig, CoreConfig, FticConfig, Thresholds
 
 if TYPE_CHECKING:
     from termo.dataset import ExperimentData
+
+FRED_URL_TEMPLATE = "https://fred.stlouisfed.org/graph/fredgraph.csv?id={series_id}"
+
+
+def fake_fred(curve: pd.DataFrame) -> Callable[[str], str]:
+    """An HTTP getter that serves `curve` in FRED's CSV format, one series per URL."""
+
+    def get(url: str) -> str:
+        for series_id in curve.columns:
+            if url == FRED_URL_TEMPLATE.format(series_id=series_id):
+                lines = [f"observation_date,{series_id}"]
+                lines += [f"{d:%Y-%m-%d},{v:.4f}" for d, v in curve[series_id].items()]
+                return "\n".join(lines) + "\n"
+        raise AssertionError(f"unexpected url {url}")
+
+    return get
+
 
 TENORS = ("DGS1", "DGS2", "DGS3", "DGS5", "DGS7", "DGS10", "DGS30")
 MATURITIES = np.array([1.0, 2.0, 3.0, 5.0, 7.0, 10.0, 30.0])

@@ -42,8 +42,12 @@ def candidate_from_record(
 
 
 def pick_winner(candidates: Sequence[Candidate]) -> Candidate | None:
-    """Highest stability x separation among configurations that pass the duration filter."""
-    eligible = [c for c in candidates if c.passes_duration]
+    """Highest stability x separation among the eligible configurations.
+
+    Eligible: passes the duration filter, and both factors are positive. The product of
+    two negative numbers would otherwise rank an unstable, unseparated model first.
+    """
+    eligible = [c for c in candidates if c.passes_duration and c.stability > 0 and c.separation > 0]
     if not eligible:
         return None
     return max(eligible, key=lambda c: c.score)

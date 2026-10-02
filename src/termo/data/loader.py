@@ -8,8 +8,11 @@ from pathlib import Path
 
 import pandas as pd
 
-from termo.data.fred import parse_series_csv
+from termo.data.fred import DataValidationError, parse_series_csv
 from termo.data.snapshot import SnapshotError, read_snapshot
+
+MAX_START_LAG_DAYS = 7
+MAX_GAP_DAYS = 10  # the longest ordinary closure (holiday next to a weekend) is 4 days
 
 
 class HoldoutAccessError(RuntimeError):
@@ -38,9 +41,7 @@ def load_curve(
     if missing:
         raise SnapshotError(f"snapshot lacks series: {missing}")
 
-    columns = [parse_series_csv(texts[name], name) for name in series]
-    frame = pd.concat(columns, axis=1, join="outer").sort_index().dropna(how="any")
-    frame = frame.loc[frame.index >= pd.Timestamp(start)]
+    frame = complete_days([parse_series_csv(texts[name], name) for name in series], start)
 
     limit: pd.Timestamp | None
     if end is not None:
@@ -51,4 +52,28 @@ def load_curve(
         limit = pd.Timestamp(holdout_start) - pd.Timedelta(days=1)
     if limit is not None:
         frame = frame.loc[frame.index <= limit]
+    check_coverage(frame, start)
     return frame
+
+
+def complete_days(columns: Sequence[pd.Series], start: date) -> pd.DataFrame:
+    """One column per series, from `start`, keeping only days where every series has a value."""
+    frame = pd.concat(list(columns), axis=1, join="outer").sort_index().dropna(how="any")
+    return frame.loc[frame.index >= pd.Timestamp(start)]
+
+
+def check_coverage(frame: pd.DataFrame, start: date) -> None:
+    """A late start or a long hole in any series silently shortens the sample: refuse it."""
+    if frame.empty:
+        raise DataValidationError("no day has a value for every series")
+    late = (frame.index[0] - pd.Timestamp(start)).days
+    if late > MAX_START_LAG_DAYS:
+        raise DataValidationError(
+            f"the sample starts on {frame.index[0].date()}, {late} days after {start}"
+        )
+    gaps = frame.index.to_series().diff().dt.days
+    if gaps.max() > MAX_GAP_DAYS:
+        raise DataValidationError(
+            f"gap of {int(gaps.max())} days ending on {gaps.idxmax().date()}: "
+            "some series has a hole there"
+        )

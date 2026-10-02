@@ -12,35 +12,45 @@ import pandas as pd
 
 from termo.config import CoreConfig, load_config
 from termo.core import (
+    DIRTY_SUFFIX,
     build_report,
+    publish_report,
     register_trials,
     registered_columns,
     run_final_holdout,
     run_trials,
     take_snapshot,
+    verify_binding,
 )
 from termo.data.fred import http_get
 from termo.data.loader import load_curve
 from termo.data.snapshot import snapshot_hash
 from termo.dataset import prepare
-from termo.report import write_report
 from termo.validation.trials import TrialLog
 
 TRIALS_DIR = Path("trials")
 REPORTS_DIR = Path("reports")
 SNAPSHOTS_DIR = Path("data") / "snapshots"
 TRIALS_FILE = "trials.jsonl"
+CODE_PATHS = ("src", "configs", "pyproject.toml")
 
 
 def code_commit() -> str:
-    """Current commit, marked dirty when there are uncommitted changes."""
+    """Current commit, marked dirty when code or configuration has uncommitted changes.
+
+    Only the paths that decide the results are checked: the trial log, the labels and
+    the reports change during a run and must not count.
+    """
     head = subprocess.run(
         ["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True
     ).stdout.strip()
     status = subprocess.run(
-        ["git", "status", "--porcelain"], capture_output=True, text=True, check=True
+        ["git", "status", "--porcelain", "--", *CODE_PATHS],
+        capture_output=True,
+        text=True,
+        check=True,
     ).stdout.strip()
-    return f"{head}-dirty" if status else head
+    return f"{head}{DIRTY_SUFFIX}" if status else head
 
 
 def _pre_holdout_curve(config: CoreConfig, snapshot_dir: Path) -> pd.DataFrame:
@@ -70,22 +80,27 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.error("--snapshot is required for this stage")
     snapshot_dir: Path = args.snapshot
 
+    data_hash, commit = snapshot_hash(snapshot_dir), code_commit()
+
     if args.stage == "register":
         curve = _pre_holdout_curve(config, snapshot_dir)
-        columns = register_trials(config, curve, log, snapshot_hash(snapshot_dir), code_commit())
+        columns = register_trials(config, curve, log, data_hash, commit)
         print(f"[ok] registered {len(log.registrations())} trials; features: {', '.join(columns)}")
     elif args.stage == "run":
-        curve = _pre_holdout_curve(config, snapshot_dir)
-        run_trials(prepare(curve, config, registered_columns(log)), log, TRIALS_DIR)
-        print("[ok] all registered trials have a result")
-    elif args.stage == "report":
+        verify_binding(log, config, data_hash, commit)  # before any computation
         curve = _pre_holdout_curve(config, snapshot_dir)
         data = prepare(curve, config, registered_columns(log))
-        report = build_report(data, log, TRIALS_DIR)
-        write_report(report, REPORTS_DIR)
+        run_trials(data, log, TRIALS_DIR, data_hash, commit)
+        print("[ok] all registered trials have a result")
+    elif args.stage == "report":
+        verify_binding(log, config, data_hash, commit)
+        curve = _pre_holdout_curve(config, snapshot_dir)
+        data = prepare(curve, config, registered_columns(log))
+        report = build_report(data, log, TRIALS_DIR, data_hash, commit)
+        publish_report(report, log, REPORTS_DIR, data_hash, commit)
         print(f"[ok] verdict: {report.verdict.value} -> {REPORTS_DIR.as_posix()}/go_no_go.md")
     else:
-        result = run_final_holdout(config, snapshot_dir, log, REPORTS_DIR)
+        result = run_final_holdout(config, snapshot_dir, log, REPORTS_DIR, commit)
         mark = "[ok]" if result.passed else "[x]"
         print(
             f"{mark} holdout: excess_model={result.excess_model:.4f} "
