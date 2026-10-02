@@ -188,7 +188,7 @@ Regla del proyecto: **registrar antes de mirar**.
 
 - Archivo `trials/trials.jsonl`, solo se agregan líneas.
 - **Registro previo** (antes de correr): `trial_id`, fecha y hora, hipótesis, configuración completa, hash del snapshot, commit del código.
-- **Registro de resultado** (después): `trial_id`, métricas, estado (`mantenido` / `descartado` / `falló`), motivo, ruta de la serie de etiquetas (`trials/labels/<trial_id>.csv`).
+- **Registro de resultado** (después): `trial_id`, métricas, estado (`kept` / `discarded` / `failed`), motivo, ruta de la serie de etiquetas (`trials/labels/<trial_id>.csv`).
 - El código **se niega** a guardar un resultado sin registro previo, o un segundo resultado para el mismo `trial_id`.
 
 Las 24 configuraciones, las líneas base, los supuestos de FTIC y el conjunto de variables se registran antes de la primera corrida.
@@ -201,7 +201,9 @@ Las 24 configuraciones, las líneas base, los supuestos de FTIC y el conjunto de
 2. Se descarta toda configuración con alguna fase de duración mediana menor a 20 días hábiles, o con alguna fase nunca visitada fuera de muestra.
 3. Entre las restantes gana la de mayor puntaje:
 
-$$\mathcal J = \text{estabilidad} \times \eta^2_{4\text{ sem}}$$
+$$\mathcal J = \text{estabilidad} \times \text{separación}_{4\text{ sem}}$$
+
+La separación es el $\eta^2$ **en exceso** definido en §8.2.
 
 4. **FTIC como segunda opinión sobre $K$** (§7.1). Si FTIC elige un $K$ distinto, el candidato pasa a ser $(\min(K^*, K_{\text{FTIC}}), \lambda^*)$. Si ese candidato pasa el filtro de duración y los criterios de no-go de §8.7, es el modelo final. Si no, se mantiene $(K^*, \lambda^*)$ y la discrepancia queda en el reporte.
 
@@ -247,17 +249,23 @@ Advertencia: $S_1$ sale alto casi por construcción, porque dos ventanas consecu
 - Lecturas semanales fuera de muestra.
 - Objetivo: cambio de la tasa a 10 años de $t$ a $t+h$, en pb, con $h$ = 4 semanas (20 días hábiles) y 13 semanas (65 días hábiles).
 - Se excluye toda lectura cuyo horizonte termine en el holdout.
-- **Efecto:** $\eta^2 = SS_{\text{entre}} / SS_{\text{total}}$.
+- **Efecto crudo:** $\eta^2 = SS_{\text{entre}} / SS_{\text{total}}$.
+- **Separación = $\eta^2$ en exceso:** el $\eta^2$ crudo menos el $\eta^2$ promedio que logra la misma serie de fases desplazada en el tiempo (todos los desplazamientos circulares).
 - **Intervalos:** bootstrap por bloques móviles de 26 semanas, 2,000 remuestreos, percentiles 2.5 y 97.5.
-- Se reporta también Kruskal-Wallis, con la nota de que su valor p es optimista por el traslape de horizontes.
+
+**Por qué en exceso.** Fases persistentes explican algo de la varianza de una serie autocorrelacionada por pura suerte, y más fases explican más. Medido con ruido puro al prototipar: cinco fases sin relación con las tasas le "ganaban" a dos fases sin relación el 25% de las veces, cuando lo nominal es 2.5%. Con la corrección baja a 1.7%. Sin ella, tanto la elección de $K$ como el criterio contra la inercia favorecen a los modelos con más fases.
 
 ### 8.3 Independencia
 
-Tabla fase × signo del cambio a 4 semanas, estadístico $\chi^2$. El valor p se obtiene desplazando circularmente la serie de fases un número aleatorio de semanas (mínimo 26), 2,000 veces. Así se respeta la autocorrelación.
+Tabla fase × signo del cambio a 4 semanas, estadístico $\chi^2$. El valor p se obtiene desplazando circularmente la serie de fases por **todos** los desplazamientos posibles y contando cuántos igualan o superan al observado. Así se respeta la autocorrelación.
+
+No se excluyen los desplazamientos pequeños. Medido al prototipar: con una zona de exclusión de 26 semanas la prueba rechaza el 4% de las veces cuando debería rechazar el 1%; con todos los desplazamientos rechaza el 0.7%.
+
+El valor p más chico posible es 1 entre el número de semanas. Con pocos episodios de fase la prueba tiene poca potencia: en la curva sintética de prueba (unos 8 episodios plantados en 192 semanas) no bajó de 0.15.
 
 ### 8.4 Duración
 
-Rachas de etiquetas diarias consecutivas iguales en la serie fuera de muestra, ya alineada y concatenada. Se reporta mediana y p25-p75 por fase.
+Rachas de etiquetas diarias consecutivas iguales en la serie fuera de muestra, ya alineada y concatenada. Se reporta la mediana por fase.
 
 ### 8.5 Líneas base
 
@@ -267,7 +275,9 @@ Rachas de etiquetas diarias consecutivas iguales en la serie fuera de muestra, y
 | Inercia | Dos grupos según el signo de $\widetilde\Delta_{63} L$ |
 | K-means | El mismo pipeline y walk-forward con $\lambda = 0$ y el mismo $K$ |
 
-La comparación contra la inercia usa un **bootstrap pareado**: los mismos bloques remuestreados para TERMO y para la inercia, e intervalo de la diferencia de $\eta^2$.
+K-means se ajusta con `sklearn.cluster.KMeans`: minimiza el mismo objetivo que el jump model con multa cero, y con `jumpmodels` ese ajuste tarda más de un minuto por corrida.
+
+La comparación contra la inercia usa un **bootstrap pareado**: los mismos bloques remuestreados para TERMO y para la inercia. El intervalo de la diferencia se corrige por la diferencia de sus niveles de azar (§8.2), para que más fases no den ventaja.
 
 ### 8.6 Control de suerte: PBO y $N$ efectivo
 
@@ -285,6 +295,8 @@ El ganador se elige mirando el movimiento futuro de la 10 años. Hay que medir c
 
 Advertencia: si muchas configuraciones dan casi lo mismo, PBO sale cerca de 0.5 aunque las fases sean reales. Por eso su falla lleva a podar, no a cancelar.
 
+PBO ordena las configuraciones por $\eta^2$ crudo. La corrección de azar de §8.2 no se puede recalcular en cada una de las 12,870 particiones a un costo razonable.
+
 ### 8.7 Criterios de aceptación
 
 Los umbrales son los propuestos en el diseño técnico §8.7. **El comité aún debe ratificarlos.**
@@ -292,11 +304,11 @@ Los umbrales son los propuestos en el diseño técnico §8.7. **El comité aún 
 | Criterio | Umbral | Si falla |
 |---|---|---|
 | Estabilidad (§8.1) | $\ge 0.6$ | **No-go** |
-| Separación: $\eta^2_{4\text{ sem}}$ de TERMO menos el de la inercia | Intervalo de 95% de la diferencia por encima de 0 | **No-go** |
+| Separación a 4 semanas de TERMO menos la de la inercia (ambas en exceso) | Intervalo de 95% de la diferencia por encima de 0 | **No-go** |
 | Independencia (§8.3) | $p < 0.01$ | **No-go** |
 | Duración mediana | $\ge 20$ días hábiles en todas las fases | La configuración se descarta |
 | PBO | $\le 0.05$ | Podar la grilla y repetir, como trials nuevos |
-| Holdout | $\eta^2_{4\text{ sem}}$ de TERMO $\ge$ el de la inercia | Revisión antes de seguir |
+| Holdout | Separación a 4 semanas de TERMO $\ge$ la de la inercia | Revisión antes de seguir |
 
 **Si ninguna configuración pasa el filtro de duración: no-go.**
 
@@ -331,9 +343,15 @@ TERMO/
 ├── src/termo/
 │   ├── data/                # descarga, snapshot, cargador con guardia de holdout
 │   ├── features/            # PCA, velocidad, volatilidad, pipeline
-│   ├── regime/              # envoltura del JM, alineación de fases
-│   └── validation/          # walk-forward, estabilidad, separación, líneas base,
-│                            # PBO, FTIC, bitácora, reporte
+│   ├── regime/              # interfaz de modelo (JM y K-means), alineación de fases
+│   ├── validation/          # métricas, bloques, walk-forward, estabilidad,
+│   │                        # FTIC, PBO, bitácora
+│   ├── dataset.py           # datos compartidos por todas las configuraciones
+│   ├── experiment.py        # evaluación de una configuración
+│   ├── selection.py         # elección de K y lambda
+│   ├── report.py            # criterios, veredicto, archivos de reporte
+│   ├── core.py              # las cinco etapas
+│   └── cli.py               # línea de comandos
 ├── trials/
 ├── reports/
 ├── tests/
@@ -367,7 +385,8 @@ TERMO/
 
 | Riesgo | Tratamiento |
 |---|---|
-| `jumpmodels` 0.1.1 (enero 2025) con Python 3.14: compatibilidad sin probar | Primer paso del plan: instalar y correr su ejemplo. Si falla, se copia el algoritmo al repo (licencia Apache 2.0, código pequeño) |
+| `jumpmodels` 0.1.1 (enero 2025) con Python 3.14 | Verificado al escribir el plan: funciona con numpy 2.5, pandas 3.0 y scikit-learn 1.9. Queda como prueba permanente |
+| Los criterios son exigentes con pocos episodios | En la curva sintética con fases plantadas el veredicto fue no-go: la lectura en línea reconoce cada fase con retraso y la inercia es una línea base fuerte. Un no-go con datos reales es un resultado posible y legítimo |
 | Las velocidades están en pb: los episodios de los 80 pueden definir "venta extrema" | Recorte a ±3 desviaciones; se revisa en el reporte qué años pueblan cada fase |
 | La de 30 años en 2002-2006 es de otra construcción | Se usa cruda; documentado (§3) |
 | $S_1$ inflado por datos compartidos | Se reporta $S_2$ aparte y se marca si queda bajo 0.6 |
@@ -387,6 +406,9 @@ TERMO/
 7. Línea base HMM fuera.
 8. Comparación con la inercia por bootstrap pareado en lugar de "intervalos que no se traslapan".
 9. Criterio de holdout concreto.
+10. La separación se mide en exceso sobre el azar (§8.2), no con $\eta^2$ crudo.
+11. La prueba de independencia usa todos los desplazamientos, sin zona de exclusión (§8.3).
+12. K-means con `scikit-learn` en lugar de `jumpmodels` con multa cero (§8.5).
 
 ### Pendiente fuera de este spec
 
