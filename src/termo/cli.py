@@ -36,13 +36,16 @@ CODE_PATHS = ("src", "configs", "pyproject.toml")
 
 
 def code_commit() -> str:
-    """Current commit, marked dirty when code or configuration has uncommitted changes.
+    """Last commit that touched code or configuration, marked dirty if they have changed since.
 
-    Only the paths that decide the results are checked: the trial log, the labels and
-    the reports change during a run and must not count.
+    Only the paths that decide the results count. Snapshots, the trial log, labels and
+    reports are committed while the experiment runs; they must not move this value.
     """
     head = subprocess.run(
-        ["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True
+        ["git", "log", "-1", "--format=%H", "--", *CODE_PATHS],
+        capture_output=True,
+        text=True,
+        check=True,
     ).stdout.strip()
     status = subprocess.run(
         ["git", "status", "--porcelain", "--", *CODE_PATHS],

@@ -5080,3 +5080,28 @@ git commit -m "report: final holdout evaluation"
 | §9 Salidas | 20, 22 |
 | §11 Pruebas del código | 2 a 23 |
 | §12 Riesgo de compatibilidad de `jumpmodels` | 1 |
+
+---
+
+## Anexo: cambios tras la revisión independiente (2026-10-01)
+
+Las Tareas 1 a 22 se ejecutaron tal como están escritas arriba. Después, un revisor independiente leyó todo el código y se aplicaron dos commits de arreglos: `d2ba5b1` y `fd4dc40`. **A partir de ahí el repositorio es la fuente de verdad**; el código de las tareas de arriba ya no coincide línea por línea en estos archivos:
+
+| Archivo | Qué cambió |
+|---|---|
+| `src/termo/validation/metrics.py`, `bootstrap.py`, `experiment.py` | El nivel de azar de la separación voltea signos por bloques. El de desplazamiento queda como comparación que no decide |
+| `src/termo/core.py`, `cli.py`, `validation/trials.py`, `report.py` | Cada etapa queda amarrada a la configuración, el snapshot y el commit registrados. Los reportes y el resultado del holdout se agregan a la bitácora. El holdout se valida entero antes de abrirse |
+| `src/termo/data/loader.py` | Chequeo de cobertura: inicio tardío o huecos en una serie |
+| `src/termo/selection.py` | El ganador exige estabilidad y separación positivas |
+| `src/termo/validation/pbo.py` | Empates a medias |
+| `tests/` | Pruebas nuevas para todo lo anterior; las de walk-forward ahora prueban que cada ajuste ve solo su ventana y que las etiquetas salen de la lectura en línea |
+
+El detalle y las mediciones están en el spec, sección "Cambios tras la revisión independiente del código".
+
+**Efecto en la Tarea 24:**
+
+- `register` se niega a correr si hay cambios sin commitear en `src/`, `configs/` o `pyproject.toml`.
+- `run`, `report` y `final-holdout` se niegan a correr si la configuración, el snapshot o el commit no son los registrados. Cualquier cambio de código después de registrar obliga a decidir con el usuario.
+- `snapshot` rechaza la descarga si alguna serie empieza tarde o tiene un hueco.
+
+**Efecto en la Tarea 23, Paso 3:** la suite tiene 167 pruebas.

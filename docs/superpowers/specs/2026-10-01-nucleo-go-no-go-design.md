@@ -65,6 +65,8 @@ Cada caja es un módulo con una interfaz clara y sus pruebas en `pytest`.
 
 **Validación en la frontera.** Al descargar: columnas esperadas, fechas crecientes sin duplicados, valores entre 0 y 25, serie no vacía. Al cargar: el hash del archivo coincide con el manifiesto.
 
+**Cobertura.** La muestra conjunta debe empezar a más tardar 7 días después del inicio y no tener huecos de más de 10 días entre fechas consecutivas. Un hueco en una sola serie acortaría la muestra sin avisar. Se revisa al cargar y también sobre toda la descarga al tomar el snapshot, holdout incluido: solo mira qué días tienen dato, y un hueco descubierto después se descubriría con el holdout ya abierto.
+
 ### Datos verificados (2026-10-01, en filas del CSV de FRED)
 
 | Serie | Hallazgo |
@@ -190,6 +192,9 @@ Regla del proyecto: **registrar antes de mirar**.
 - **Registro previo** (antes de correr): `trial_id`, fecha y hora, hipótesis, configuración completa, hash del snapshot, commit del código.
 - **Registro de resultado** (después): `trial_id`, métricas, estado (`kept` / `discarded` / `failed`), motivo, ruta de la serie de etiquetas (`trials/labels/<trial_id>.csv`).
 - El código **se niega** a guardar un resultado sin registro previo, o un segundo resultado para el mismo `trial_id`.
+- **Amarre.** El registro de configuración guarda la configuración completa (fechas, horizontes, umbrales, semillas), el hash del snapshot y el commit. Las etapas de correr, reportar y abrir el holdout se niegan a trabajar si alguno de los tres cambió. Registrar exige código commiteado.
+- **Reportes.** Cada reporte generado se agrega a la bitácora con su veredicto y sus criterios. Un reporte nuevo no sustituye al anterior: queda al lado.
+- **Holdout.** La apertura y el resultado quedan en la bitácora.
 
 Las 24 configuraciones, las líneas base, los supuestos de FTIC y el conjunto de variables se registran antes de la primera corrida.
 
@@ -204,6 +209,8 @@ Las 24 configuraciones, las líneas base, los supuestos de FTIC y el conjunto de
 $$\mathcal J = \text{estabilidad} \times \text{separación}_{4\text{ sem}}$$
 
 La separación es el $\eta^2$ **en exceso** definido en §8.2.
+
+Solo compiten las configuraciones con estabilidad positiva y separación positiva: el producto de dos negativos sería positivo. Si ninguna lo cumple, el veredicto es no-go.
 
 4. **FTIC como segunda opinión sobre $K$** (§7.1). Si FTIC elige un $K$ distinto, el candidato pasa a ser $(\min(K^*, K_{\text{FTIC}}), \lambda^*)$. Si ese candidato pasa el filtro de duración y los criterios de no-go de §8.7, es el modelo final. Si no, se mantiene $(K^*, \lambda^*)$ y la discrepancia queda en el reporte.
 
@@ -250,10 +257,21 @@ Advertencia: $S_1$ sale alto casi por construcción, porque dos ventanas consecu
 - Objetivo: cambio de la tasa a 10 años de $t$ a $t+h$, en pb, con $h$ = 4 semanas (20 días hábiles) y 13 semanas (65 días hábiles).
 - Se excluye toda lectura cuyo horizonte termine en el holdout.
 - **Efecto crudo:** $\eta^2 = SS_{\text{entre}} / SS_{\text{total}}$.
-- **Separación = $\eta^2$ en exceso:** el $\eta^2$ crudo menos el $\eta^2$ promedio que logra la misma serie de fases desplazada en el tiempo (todos los desplazamientos circulares).
+- **Separación = $\eta^2$ en exceso:** el $\eta^2$ crudo menos su nivel de azar. El nivel de azar es el $\eta^2$ promedio que logran las mismas fases cuando a los movimientos se les voltea el signo al azar, por bloques de 26 semanas (2,000 sorteos, semilla fija).
+- **Medición de comparación:** el exceso calculado con el nivel de azar anterior (las fases desplazadas en el tiempo). Se registra y se reporta para cada modelo y línea base. **Nunca decide**: ni el puntaje, ni los criterios, ni el holdout.
 - **Intervalos:** bootstrap por bloques móviles de 26 semanas, 2,000 remuestreos, percentiles 2.5 y 97.5.
 
-**Por qué en exceso.** Fases persistentes explican algo de la varianza de una serie autocorrelacionada por pura suerte, y más fases explican más. Medido con ruido puro al prototipar: cinco fases sin relación con las tasas le "ganaban" a dos fases sin relación el 25% de las veces, cuando lo nominal es 2.5%. Con la corrección baja a 1.7%. Sin ella, tanto la elección de $K$ como el criterio contra la inercia favorecen a los modelos con más fases.
+**Por qué en exceso.** Fases persistentes explican algo de la varianza de una serie autocorrelacionada por pura suerte, y más fases explican más. Medido con ruido puro al prototipar: cinco fases sin relación con las tasas le "ganaban" a dos fases sin relación el 25% de las veces, cuando lo nominal es 2.5%. Sin corrección, tanto la elección de $K$ como el criterio contra la inercia favorecen a los modelos con más fases.
+
+**Por qué voltear signos y no desplazar las fases.** Una fase rara que coincide con las semanas más volátiles explica varianza por suerte: en esas semanas la tasa se mueve mucho hacia cualquier lado. Desplazar las fases rompe ese vínculo con la volatilidad y resta de menos. Voltear signos deja el tamaño de cada movimiento junto a su fase y borra solo la dirección. Medido con fases sin información de dirección (1,900 semanas, movimientos de 4 semanas traslapados):
+
+| | Desplazar fases | Voltear signos |
+|---|---|---|
+| Separación inflada (debería ser 0) | +0.005 a +0.010 | +0.0003 a +0.0017 |
+| El criterio contra la inercia pasa por suerte (nominal 2.5%) | 2% a 4% | 0.5% a 1.5% |
+| Detecta una señal real | 94% | 90% |
+
+Con una señal real muy fuerte el nivel de azar por volteo sube un poco, así que la medida es conservadora.
 
 ### 8.3 Independencia
 
@@ -295,7 +313,9 @@ El ganador se elige mirando el movimiento futuro de la 10 años. Hay que medir c
 
 Advertencia: si muchas configuraciones dan casi lo mismo, PBO sale cerca de 0.5 aunque las fases sean reales. Por eso su falla lleva a podar, no a cancelar.
 
-PBO ordena las configuraciones por $\eta^2$ crudo. La corrección de azar de §8.2 no se puede recalcular en cada una de las 12,870 particiones a un costo razonable.
+PBO ordena las configuraciones por $\eta^2$ crudo. La corrección de azar de §8.2 no se puede recalcular en cada una de las 12,870 particiones a un costo razonable. Efecto medido: con una grilla que mezcla distintos $K$, PBO sale más bajo de lo debido (0.30 con ruido puro, contra 0.53 con todos los $K$ iguales). Nunca bajó de 0.15 con ruido, lejos del umbral de 0.05.
+
+Los empates cuentan a medias: configuraciones con etiquetas idénticas dan PBO de 0.5, ni 0 ni 1.
 
 ### 8.7 Criterios de aceptación
 
@@ -315,7 +335,9 @@ Los umbrales son los propuestos en el diseño técnico §8.7. **El comité aún 
 ### 8.8 Evaluación final en holdout
 
 - Se corre **una sola vez**, después de congelar el modelo final y anotarlo en bitácora.
-- Requiere la bandera explícita y deja un registro `holdout_abierto`. El código se niega a correrla si ese registro ya existe.
+- Requiere la bandera explícita y deja un registro `holdout_opened`. El código se niega a correrla si ese registro ya existe.
+- Antes de marcar el holdout como abierto se comprueba todo lo que puede fallar: que el último reporte **de la bitácora** sea un go, que configuración, snapshot y commit sean los registrados, y que los archivos del snapshot coincidan con su manifiesto. Un error de ruta no gasta la única apertura.
+- El resultado también se agrega a la bitácora.
 - El walk-forward continúa con reentrenamientos cada 26 semanas dentro del holdout.
 - Con unas 104 semanas habrá pocas fases. El reporte da el número de semanas y de episodios, y advierte que el resultado es ruidoso.
 
@@ -409,6 +431,14 @@ TERMO/
 10. La separación se mide en exceso sobre el azar (§8.2), no con $\eta^2$ crudo.
 11. La prueba de independencia usa todos los desplazamientos, sin zona de exclusión (§8.3).
 12. K-means con `scikit-learn` en lugar de `jumpmodels` con multa cero (§8.5).
+
+### Cambios tras la revisión independiente del código
+
+13. Nivel de azar por volteo de signos en bloques; el de desplazamiento queda como comparación que no decide (§8.2).
+14. Amarre de cada etapa a la configuración, el snapshot y el commit registrados; reportes y resultado de holdout en la bitácora (§6).
+15. Validación completa antes de abrir el holdout (§8.8).
+16. Chequeo de cobertura de los datos (§3).
+17. El ganador exige estabilidad y separación positivas (§7); PBO con empates a medias (§8.6); el reporte rechaza una grilla con trials fallidos.
 
 ### Pendiente fuera de este spec
 
