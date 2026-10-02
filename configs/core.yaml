@@ -1,0 +1,37 @@
+# TERMO spec 1 (nucleo go/no-go). Every value here is pre-registered:
+# changing one after a run is a new trial, not an edit.
+series: [DGS1, DGS2, DGS3, DGS5, DGS7, DGS10, DGS30]
+start: 1977-02-15
+holdout_start: 2024-10-01
+first_train_end: 1987-12-31
+refit_weeks: 26
+burn_in_days: 252
+
+grid:
+  k: [2, 3, 4, 5]
+  jump_penalty: [5, 12, 30, 80, 200, 500]
+
+horizons_days:
+  short: 20
+  long: 65
+
+thresholds:
+  stability_min: 0.6
+  independence_p_max: 0.01
+  min_median_duration_days: 20
+  pbo_max: 0.05
+  collinearity_max: 0.8
+
+bootstrap:
+  block_weeks: 26
+  n_resamples: 2000
+  seed: 0
+
+ftic:
+  k0: 3
+  mean_phase_days: 40
+  saturated_k: 6
+  max_jump_fraction: 0.4
+
+pbo_blocks: 16
+effective_n_cut: 0.2

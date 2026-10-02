@@ -1,0 +1,105 @@
+"""Synthetic yield curves with planted regimes. No real market data in the tests."""
+
+from __future__ import annotations
+
+from datetime import date
+from typing import TYPE_CHECKING
+
+import numpy as np
+import pandas as pd
+import pytest
+
+from termo.config import BootstrapConfig, CoreConfig, FticConfig, Thresholds
+
+if TYPE_CHECKING:
+    from termo.dataset import ExperimentData
+
+TENORS = ("DGS1", "DGS2", "DGS3", "DGS5", "DGS7", "DGS10", "DGS30")
+MATURITIES = np.array([1.0, 2.0, 3.0, 5.0, 7.0, 10.0, 30.0])
+MIN_REGIME_DAYS, MAX_REGIME_DAYS = 60, 200
+
+
+def planted_regimes(n_days: int, rng: np.random.Generator) -> np.ndarray:
+    """Alternating 0/1 runs of random length, so the series never repeats with a fixed period."""
+    regimes = np.empty(n_days, dtype=int)
+    position, state = 0, 0
+    while position < n_days:
+        length = int(rng.integers(MIN_REGIME_DAYS, MAX_REGIME_DAYS + 1))
+        regimes[position : position + length] = state
+        position, state = position + length, 1 - state
+    return regimes
+
+
+def make_curve(n_days: int = 2400, seed: int = 0) -> tuple[pd.DataFrame, np.ndarray]:
+    """Two alternating regimes: calm rally (0) and volatile sell-off (1)."""
+    rng = np.random.default_rng(seed)
+    regimes = planted_regimes(n_days, rng)
+    drift = np.where(regimes == 1, 0.015, -0.015)
+    vol = np.where(regimes == 1, 0.06, 0.02)
+    level = 10.0 + np.cumsum(drift + vol * rng.normal(size=n_days))
+    slope = np.cumsum(0.01 * rng.normal(size=n_days))
+    curvature = np.cumsum(0.004 * rng.normal(size=n_days))
+    x = np.log(MATURITIES)
+    x = (x - x.mean()) / x.std()
+    belly = -(x**2 - (x**2).mean())
+    noise = 0.003 * rng.normal(size=(n_days, len(TENORS)))
+    values = level[:, None] + slope[:, None] * x[None, :] + curvature[:, None] * belly[None, :]
+    index = pd.bdate_range("1990-01-01", periods=n_days, name="date")
+    curve = pd.DataFrame(values + noise, index=index, columns=list(TENORS))
+    assert (curve > 0).all().all(), "synthetic yields must stay positive"
+    return curve, regimes
+
+
+def make_config() -> CoreConfig:
+    return CoreConfig(
+        series=TENORS,
+        start=date(1990, 1, 1),
+        holdout_start=date(1998, 4, 1),
+        first_train_end=date(1994, 6, 30),
+        refit_weeks=26,
+        burn_in_days=252,
+        k_values=(2, 3),
+        jump_penalties=(10.0, 50.0),
+        horizon_short_days=20,
+        horizon_long_days=65,
+        pbo_blocks=4,
+        effective_n_cut=0.2,
+        thresholds=Thresholds(
+            stability_min=0.6,
+            independence_p_max=0.01,
+            min_median_duration_days=20,
+            pbo_max=0.05,
+            collinearity_max=0.8,
+        ),
+        bootstrap=BootstrapConfig(block_weeks=8, n_resamples=200, seed=0),
+        ftic=FticConfig(k0=3, mean_phase_days=40, saturated_k=6, max_jump_fraction=0.4),
+    )
+
+
+@pytest.fixture(scope="session")
+def curve_and_regimes() -> tuple[pd.DataFrame, np.ndarray]:
+    return make_curve()
+
+
+@pytest.fixture(scope="session")
+def curve(curve_and_regimes: tuple[pd.DataFrame, np.ndarray]) -> pd.DataFrame:
+    return curve_and_regimes[0]
+
+
+@pytest.fixture(scope="session")
+def config() -> CoreConfig:
+    return make_config()
+
+
+@pytest.fixture(scope="session")
+def pre_holdout(curve: pd.DataFrame, config: CoreConfig) -> pd.DataFrame:
+    return curve.loc[curve.index < pd.Timestamp(config.holdout_start)]
+
+
+@pytest.fixture(scope="session")
+def data(pre_holdout: pd.DataFrame, config: CoreConfig) -> ExperimentData:
+    # Imported here so that the fixtures above work before these modules exist.
+    from termo.dataset import prepare
+    from termo.features.pipeline import FEATURE_NAMES
+
+    return prepare(pre_holdout, config, FEATURE_NAMES)
