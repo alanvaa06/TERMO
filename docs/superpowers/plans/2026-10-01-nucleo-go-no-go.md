@@ -5104,4 +5104,6 @@ El detalle y las mediciones están en el spec, sección "Cambios tras la revisi�
 - `run`, `report` y `final-holdout` se niegan a correr si la configuración, el snapshot o el commit no son los registrados. Cualquier cambio de código después de registrar obliga a decidir con el usuario.
 - `snapshot` rechaza la descarga si alguna serie empieza tarde o tiene un hueco.
 
-**Efecto en la Tarea 23, Paso 3:** la suite tiene 167 pruebas.
+**Efecto en la Tarea 23, Paso 3:** la suite tiene 184 pruebas.
+
+**Segunda revisión (commit `4c5f149`).** Un segundo revisor comprobó los arreglos y pidió cerrar más huecos antes de registrar: hash de los archivos de etiquetas en la bitácora, chequeo de todo el snapshot antes de abrir el holdout, identidad del código por contenido (no por commit ni por carpeta actual) y versiones de librerías amarradas. Se sembraron 27 errores a mano; las pruebas los detectan todos.

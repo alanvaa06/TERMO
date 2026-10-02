@@ -15,7 +15,9 @@
 - # decision: separacion = eta2 en exceso sobre un nivel de azar por VOLTEO DE SIGNOS en bloques de 26 semanas (no por desplazamiento de fases: ese inflaba +0.005 a +0.010 cuando una fase rara coincide con alta volatilidad). Con eta2 crudo, 5 fases de ruido ganaban a 2 fases de ruido 25% de las veces (nominal 2.5%).
 - # decision: la medicion por desplazamiento se registra y reporta como comparacion declarada de antemano; nunca decide. No se cambia de criterio despues de ver un resultado: las alternativas se calculan en la misma corrida.
 - # decision: cada etapa (run, report, final-holdout) esta amarrada a la configuracion completa, el hash del snapshot y el commit del registro; reportes y resultado de holdout van a la bitacora; registrar exige codigo commiteado.
-- # decision: el ganador exige estabilidad y separacion positivas; sin ninguno, no-go.
+- # decision: el ganador exige estabilidad y separacion positivas; sin ninguno, no-go. La misma regla aplica al modelo mas simple que propone FTIC.
+- # decision: la identidad del codigo es el hash de contenido de git para src, configs y pyproject.toml (no el commit ni la carpeta actual); tambien se amarran las versiones de librerias y el SHA-256 de cada archivo de etiquetas.
+- # decision: potencia medida del criterio contra la inercia: detecta eta2=0.01 el 15%, 0.02 el 40%, 0.05 el 94% de las veces. Un no-go significa "no se distingue con claridad de la inercia", no "no hay fases".
 - # decision: prueba de independencia = chi2 con valor p por TODOS los desplazamientos circulares; excluir los pequenos rechaza 4% bajo la nula al nivel 1%.
 - # decision: linea base K-means con sklearn.KMeans (mismo objetivo que JM con multa 0; jumpmodels tarda ~84 s por ajuste con multa 0).
 - # decision: jumpmodels 0.1.1 verificado en Python 3.14 / numpy 2.5 / pandas 3.0 / sklearn 1.9; predict_online causal; ajuste K=5, T=12000 ~1 s.

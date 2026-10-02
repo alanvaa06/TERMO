@@ -190,9 +190,11 @@ Regla del proyecto: **registrar antes de mirar**.
 
 - Archivo `trials/trials.jsonl`, solo se agregan líneas.
 - **Registro previo** (antes de correr): `trial_id`, fecha y hora, hipótesis, configuración completa, hash del snapshot, commit del código.
-- **Registro de resultado** (después): `trial_id`, métricas, estado (`kept` / `discarded` / `failed`), motivo, ruta de la serie de etiquetas (`trials/labels/<trial_id>.csv`).
+- **Registro de resultado** (después): `trial_id`, métricas, estado (`kept` / `discarded`), motivo, ruta de la serie de etiquetas (`trials/labels/<trial_id>.csv`) y el SHA-256 de ese archivo. El reporte recalcula sus criterios a partir de esos archivos, así que rechaza cualquiera que no coincida con su hash.
+- Un trial que se cae a medias no deja resultado: queda pendiente y el mismo comando lo reintenta.
 - El código **se niega** a guardar un resultado sin registro previo, o un segundo resultado para el mismo `trial_id`.
-- **Amarre.** El registro de configuración guarda la configuración completa (fechas, horizontes, umbrales, semillas), el hash del snapshot y el commit. Las etapas de correr, reportar y abrir el holdout se niegan a trabajar si alguno de los tres cambió. Registrar exige código commiteado.
+- **Amarre.** El registro de configuración guarda cuatro cosas: la configuración completa (fechas, horizontes, umbrales, semillas), el hash del snapshot, la identidad del código y las versiones de las librerías que calculan (numpy, pandas, scipy, scikit-learn, jumpmodels, Python). Las etapas de correr, reportar y abrir el holdout se niegan a trabajar si alguna cambió. Registrar exige código commiteado.
+- **Identidad del código.** Es el hash de contenido que git da a `src/`, `configs/` y `pyproject.toml`, leído del repositorio desde donde corre el paquete. No cambia al commitear datos, bitácora o reportes, ni al reescribir el historial sin tocar el código; sí cambia con cualquier cambio de código o configuración.
 - **Reportes.** Cada reporte generado se agrega a la bitácora con su veredicto y sus criterios. Un reporte nuevo no sustituye al anterior: queda al lado.
 - **Holdout.** La apertura y el resultado quedan en la bitácora.
 
@@ -336,7 +338,7 @@ Los umbrales son los propuestos en el diseño técnico §8.7. **El comité aún 
 
 - Se corre **una sola vez**, después de congelar el modelo final y anotarlo en bitácora.
 - Requiere la bandera explícita y deja un registro `holdout_opened`. El código se niega a correrla si ese registro ya existe.
-- Antes de marcar el holdout como abierto se comprueba todo lo que puede fallar: que el último reporte **de la bitácora** sea un go, que configuración, snapshot y commit sean los registrados, y que los archivos del snapshot coincidan con su manifiesto. Un error de ruta no gasta la única apertura.
+- Antes de marcar el holdout como abierto se comprueba todo lo que puede fallar: que el último reporte **de la bitácora** sea un go, que configuración, snapshot, código y librerías sean los registrados, que los archivos del snapshot coincidan con su manifiesto, que no haya huecos en ningún tramo (mirando solo fechas) y que el holdout tenga al menos 120 días. Un error de ruta no gasta la única apertura.
 - El resultado también se agrega a la bitácora.
 - El walk-forward continúa con reentrenamientos cada 26 semanas dentro del holdout.
 - Con unas 104 semanas habrá pocas fases. El reporte da el número de semanas y de episodios, y advierte que el resultado es ruidoso.
@@ -438,7 +440,29 @@ TERMO/
 14. Amarre de cada etapa a la configuración, el snapshot y el commit registrados; reportes y resultado de holdout en la bitácora (§6).
 15. Validación completa antes de abrir el holdout (§8.8).
 16. Chequeo de cobertura de los datos (§3).
-17. El ganador exige estabilidad y separación positivas (§7); PBO con empates a medias (§8.6); el reporte rechaza una grilla con trials fallidos.
+17. El ganador, y también el modelo más simple que propone FTIC, exigen estabilidad y separación positivas (§7); PBO con empates a medias (§8.6).
+18. Hash de cada archivo de etiquetas en la bitácora; identidad del código por contenido; versiones de librerías amarradas (§6).
+
+### Lo que los criterios pueden y no pueden detectar
+
+Medido por el segundo revisor con datos sintéticos de 1,900 semanas:
+
+| Tamaño real del efecto ($\eta^2$) | El criterio contra la inercia lo detecta |
+|---|---|
+| 0.01 | 15% de las veces |
+| 0.02 | 40% |
+| 0.05 | 94% |
+
+Sin efecto real, ese criterio pasa entre 0.1% y 2.0% de las veces (nominal 2.5%) y la prueba de independencia entre 0.2% y 1.5% (nominal 1%). Elegir al mejor entre 24 configuraciones sin información sube la tasa de pasar ambos a un máximo de 3.7%.
+
+Consecuencia: un efecto modesto pero real dará no-go la mayoría de las veces. Un no-go significa "no se distingue con claridad de la inercia", no "no hay fases".
+
+El criterio de holdout, con unas 100 semanas, pasa cerca de la mitad de las veces sin efecto real y 63% con un efecto de 0.05. Por eso lleva a revisión y no bloquea.
+
+### Límites que el código no cubre
+
+- La regla "el holdout se abre una vez" vale por bitácora. Una bitácora nueva no recuerda la apertura anterior; eso es disciplina de proceso.
+- Los archivos ignorados por git dentro de `src/` (por ejemplo `.pyc`) no cuentan en la identidad del código.
 
 ### Pendiente fuera de este spec
 
