@@ -19,3 +19,14 @@ data/raw/
 data/cache/
 *.parquet
 *.csv
+
+# Tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+*.egg-info/
+
+# Reproducibility artifacts are versioned on purpose
+!data/snapshots/**/*.csv
+!trials/labels/*.csv
