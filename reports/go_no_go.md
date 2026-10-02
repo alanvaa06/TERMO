@@ -1,0 +1,310 @@
+# TERMO - go/no-go
+
+**Verdict: NO-GO**
+
+Final model: `jm_k5_lam12`
+
+| Criterion | Value | Requirement | Result | Blocking |
+|---|---|---|---|---|
+| stability | 0.4978 | >= 0.6 | FAIL | yes |
+| separation_vs_inertia_low95 | -0.0062 | > 0 | FAIL | yes |
+| independence_p | 0.0382 | < 0.01 | FAIL | yes |
+| pbo | 0.2225 | <= 0.05 | FAIL | no |
+| s2_halves | 0.1437 | >= 0.6 | FAIL | no |
+
+## Notes
+
+- FTIC prefers K=2; the score prefers K=5.
+- PBO above the limit: prune the grid and repeat as new trials.
+- S2 (halves) is below the threshold: review even though the average passes.
+
+## Details
+
+```json
+{
+  "columns": [
+    "S",
+    "C",
+    "dL21",
+    "dL63",
+    "dS21",
+    "dS63",
+    "dC63",
+    "logvol5_60",
+    "logr5_20_60",
+    "logr5_60_120"
+  ],
+  "configurations": [
+    {
+      "trial_id": "jm_k2_lam5",
+      "stability": 0.5158070074023815,
+      "separation": 0.00016829070773637664,
+      "separation_shift": 0.0008444144899593838,
+      "score": 8.680552633112925e-05,
+      "passes_duration": true
+    },
+    {
+      "trial_id": "jm_k2_lam12",
+      "stability": 0.48995356042903687,
+      "separation": 0.00022896684673526756,
+      "separation_shift": 0.0008537774169442252,
+      "score": 0.00011218312177815393,
+      "passes_duration": true
+    },
+    {
+      "trial_id": "jm_k2_lam30",
+      "stability": 0.472529933778478,
+      "separation": -0.0006346021015439115,
+      "separation_shift": -0.00020063095420374275,
+      "score": -0.00029986848901822745,
+      "passes_duration": true
+    },
+    {
+      "trial_id": "jm_k2_lam80",
+      "stability": 0.41463978987052286,
+      "separation": -0.0022927730534945834,
+      "separation_shift": -0.00202153567113988,
+      "score": -0.0009506749371217912,
+      "passes_duration": true
+    },
+    {
+      "trial_id": "jm_k2_lam200",
+      "stability": 0.4251218037107445,
+      "separation": -0.0014077924966195028,
+      "separation_shift": -0.0007043054950042018,
+      "score": -0.0005984832854133352,
+      "passes_duration": true
+    },
+    {
+      "trial_id": "jm_k2_lam500",
+      "stability": 0.39818471907752334,
+      "separation": 0.001082209944690736,
+      "separation_shift": 0.001749462761484863,
+      "score": 0.0004309194628095828,
+      "passes_duration": true
+    },
+    {
+      "trial_id": "jm_k3_lam5",
+      "stability": 0.4293503076666821,
+      "separation": -0.0016705803843506369,
+      "separation_shift": -0.0003105817158240076,
+      "score": -0.00071726420200287,
+      "passes_duration": true
+    },
+    {
+      "trial_id": "jm_k3_lam12",
+      "stability": 0.44826318597813763,
+      "separation": -0.0018182301408830666,
+      "separation_shift": -0.001008320880013438,
+      "score": -0.0008150456357937215,
+      "passes_duration": true
+    },
+    {
+      "trial_id": "jm_k3_lam30",
+      "stability": 0.4478103395364395,
+      "separation": -0.0008695602652645002,
+      "separation_shift": -0.000881733979227107,
+      "score": -0.0003893980776354922,
+      "passes_duration": true
+    },
+    {
+      "trial_id": "jm_k3_lam80",
+      "stability": 0.46321896533425355,
+      "separation": 0.00016270103474077613,
+      "separation_shift": -0.0009194531785633969,
+      "score": 7.536620497143476e-05,
+      "passes_duration": true
+    },
+    {
+      "trial_id": "jm_k3_lam200",
+      "stability": 0.4349924272037046,
+      "separation": 0.00010514452683630087,
+      "separation_shift": 0.001210341842673767,
+      "score": 4.5737072935707576e-05,
+      "passes_duration": true
+    },
+    {
+      "trial_id": "jm_k3_lam500",
+      "stability": 0.385591094981963,
+      "separation": 0.0027702711774930775,
+      "separation_shift": 0.0035260406211557174,
+      "score": 0.0010681918967265277,
+      "passes_duration": false
+    },
+    {
+      "trial_id": "jm_k4_lam5",
+      "stability": 0.502664383143788,
+      "separation": -9.292397689395632e-05,
+      "separation_shift": -0.0005302641161891459,
+      "score": -4.670957352466816e-05,
+      "passes_duration": true
+    },
+    {
+      "trial_id": "jm_k4_lam12",
+      "stability": 0.46724902875788804,
+      "separation": 0.0010561945973548842,
+      "separation_shift": 0.0008103221388947469,
+      "score": 0.0004935058997933983,
+      "passes_duration": true
+    },
+    {
+      "trial_id": "jm_k4_lam30",
+      "stability": 0.4709147104430507,
+      "separation": -0.00013198926188128738,
+      "separation_shift": -0.0008879168737053371,
+      "score": -6.215568504041844e-05,
+      "passes_duration": true
+    },
+    {
+      "trial_id": "jm_k4_lam80",
+      "stability": 0.47225565521412455,
+      "separation": -0.003782679753213612,
+      "separation_shift": -0.004647574752417822,
+      "score": -0.0017863919053190973,
+      "passes_duration": true
+    },
+    {
+      "trial_id": "jm_k4_lam200",
+      "stability": 0.42968330965852763,
+      "separation": 0.0009025291209937064,
+      "separation_shift": 0.0029439858774487843,
+      "score": 0.0003878016997717775,
+      "passes_duration": true
+    },
+    {
+      "trial_id": "jm_k4_lam500",
+      "stability": 0.3728417982178205,
+      "separation": 0.006346349294379076,
+      "separation_shift": 0.0073331085457426235,
+      "score": 0.002366184283034691,
+      "passes_duration": true
+    },
+    {
+      "trial_id": "jm_k5_lam5",
+      "stability": 0.4916328653048372,
+      "separation": 0.0034401305439525397,
+      "separation_shift": 0.0028447412331107855,
+      "score": 0.0016912812363460753,
+      "passes_duration": false
+    },
+    {
+      "trial_id": "jm_k5_lam12",
+      "stability": 0.49777957788062316,
+      "separation": 0.011736326348893713,
+      "separation_shift": 0.011617177369328545,
+      "score": 0.005842103575821547,
+      "passes_duration": true
+    },
+    {
+      "trial_id": "jm_k5_lam30",
+      "stability": 0.4723680868343078,
+      "separation": -0.0021539536335235003,
+      "separation_shift": -0.0030593259753916822,
+      "score": -0.0010174589569973017,
+      "passes_duration": true
+    },
+    {
+      "trial_id": "jm_k5_lam80",
+      "stability": 0.49605709163432277,
+      "separation": -0.007890442773328869,
+      "separation_shift": 0.00030310790703053786,
+      "score": -0.003914110093844579,
+      "passes_duration": true
+    },
+    {
+      "trial_id": "jm_k5_lam200",
+      "stability": 0.40285960721893843,
+      "separation": -0.00013670822875184313,
+      "separation_shift": 0.007063035420268446,
+      "score": -5.507422333856431e-05,
+      "passes_duration": false
+    },
+    {
+      "trial_id": "jm_k5_lam500",
+      "stability": 0.3702943253815311,
+      "separation": -0.007253926644029409,
+      "separation_shift": -0.005484385869842609,
+      "score": -0.002686087873017984,
+      "passes_duration": true
+    }
+  ],
+  "baselines_separation": {
+    "kmeans_k2": -0.0003632053359321689,
+    "kmeans_k3": 0.0008671826324696489,
+    "kmeans_k4": -0.0014060063808027145,
+    "kmeans_k5": -0.0028693483921236017,
+    "inertia": 0.0023279561399885433
+  },
+  "baselines_separation_shift": {
+    "kmeans_k2": -2.7567875414539512e-06,
+    "kmeans_k3": 0.0011927771775430552,
+    "kmeans_k4": -0.0019550653872877997,
+    "kmeans_k5": -0.0029301560983408395,
+    "inertia": 0.0011413537660345421
+  },
+  "limitations": [
+    "DGS30 between 2002-02-19 and 2006-02-08 is built differently from the rest of the series.",
+    "S1 is high almost by construction: consecutive windows share most of their data.",
+    "PBO ranks configurations by raw eta-squared, so it favours grids that mix different K.",
+    "Velocities are in basis points, so the 1980s can dominate the extreme regimes.",
+    "A forward change of exactly zero counts as 'down' in the independence test.",
+    "separation_shift uses the older chance level (groups slid in time). It is a declared sensitivity check: it is reported and never decides.",
+    "Evidence for jump models comes from equities; these tests are the criterion for rates."
+  ],
+  "score_winner": "jm_k5_lam12",
+  "ftic_states": 2,
+  "gate": {
+    "eta_difference_point": 0.00940837020890517,
+    "eta_difference_low": -0.006237033626063824,
+    "eta_difference_high": 0.04371045727258514,
+    "independence_statistic": 26.25495335333804,
+    "n_weeks": 1913.0
+  },
+  "n_trials": 24,
+  "n_effective": 23,
+  "final_model": {
+    "s1_mean": 0.851903270869261,
+    "s1_min": 0.49695177347264635,
+    "s2": 0.14365588489198533,
+    "separation_long": 0.005612731193951757,
+    "median_duration_days": {
+      "0": 28.5,
+      "1": 58.0,
+      "2": 45.0,
+      "3": 112.0,
+      "4": 31.0
+    },
+    "days_by_decade": {
+      "0": {
+        "1980": 107,
+        "1990": 356,
+        "2000": 371,
+        "2010": 20,
+        "2020": 44
+      },
+      "1": {
+        "1990": 109,
+        "2000": 683,
+        "2010": 330
+      },
+      "2": {
+        "1980": 196,
+        "1990": 127,
+        "2000": 317,
+        "2010": 569
+      },
+      "3": {
+        "1980": 197,
+        "1990": 1854,
+        "2000": 1130,
+        "2010": 1582,
+        "2020": 1087
+      },
+      "4": {
+        "1990": 57,
+        "2020": 58
+      }
+    }
+  }
+}
+```

@@ -17,6 +17,7 @@
 - # decision: cada etapa (run, report, final-holdout) esta amarrada a la configuracion completa, el hash del snapshot y el commit del registro; reportes y resultado de holdout van a la bitacora; registrar exige codigo commiteado.
 - # decision: el ganador exige estabilidad y separacion positivas; sin ninguno, no-go. La misma regla aplica al modelo mas simple que propone FTIC.
 - # decision: la identidad del codigo es el hash de contenido de git para src, configs y pyproject.toml (no el commit ni la carpeta actual); tambien se amarran las versiones de librerias y el SHA-256 de cada archivo de etiquetas.
+- # decision: el usuario mantuvo los criterios tal cual (intervalo de 95%) sabiendo la potencia; registro hecho el 2026-10-02 con 30 trials y 10 variables (la regla de colinealidad quito logr2_20_60 y logr10_20_60 en la primera ventana).
 - # decision: potencia medida del criterio contra la inercia: detecta eta2=0.01 el 15%, 0.02 el 40%, 0.05 el 94% de las veces. Un no-go significa "no se distingue con claridad de la inercia", no "no hay fases".
 - # decision: prueba de independencia = chi2 con valor p por TODOS los desplazamientos circulares; excluir los pequenos rechaza 4% bajo la nula al nivel 1%.
 - # decision: linea base K-means con sklearn.KMeans (mismo objetivo que JM con multa 0; jumpmodels tarda ~84 s por ajuste con multa 0).
