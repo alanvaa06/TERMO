@@ -18,6 +18,7 @@ from termo.validation.metrics import (
     forward_change_bp,
     median_durations,
     run_lengths,
+    shift_excess_eta_squared,
     weekly_last,
 )
 
@@ -52,17 +53,35 @@ def persistent(rng: np.random.Generator, n_rows: int, n_states: int) -> np.ndarr
     return (rng.integers(0, n_states) + np.cumsum(rng.random(n_rows) < 0.05)) % n_states
 
 
+def rare_volatile_group(rng: np.random.Generator, n_rows: int) -> np.ndarray:
+    """State 1 covers about 8% of the rows, in runs of about 8."""
+    leave, share = 1.0 / 8.0, 0.08
+    enter = leave * share / (1.0 - share)
+    out = np.zeros(n_rows, dtype=int)
+    draws = rng.random(n_rows)
+    for t in range(1, n_rows):
+        out[t] = (draws[t] > leave) if out[t - 1] == 1 else (draws[t] < enter)
+    return out
+
+
+def overlapping_moves(rng: np.random.Generator, vol: np.ndarray) -> np.ndarray:
+    """4-row forward sums of shocks with the given volatility: like 4-week yield changes."""
+    shocks = rng.normal(size=len(vol) + 4) * np.concatenate([vol, vol[-4:]])
+    total = np.concatenate([[0.0], np.cumsum(shocks)])
+    return total[5 : 5 + len(vol)] - total[1 : len(vol) + 1]
+
+
+BLOCK, DRAWS = 26, 200
+
+
 def test_chance_eta_grows_with_the_number_of_states() -> None:
     """Unrelated persistent groups explain variance by luck, and more groups explain more."""
     two, five = [], []
     for seed in range(20):
         rng = np.random.default_rng(seed)
-        noise = rng.normal(size=403)
-        values = (
-            noise[3:] + noise[2:-1] + noise[1:-2] + noise[:-3]
-        )  # overlapping, like 4-week moves
-        two.append(chance_eta_squared(values, persistent(rng, 400, 2)))
-        five.append(chance_eta_squared(values, persistent(rng, 400, 5)))
+        values = overlapping_moves(rng, np.ones(400))
+        two.append(chance_eta_squared(values, persistent(rng, 400, 2), BLOCK, DRAWS, seed))
+        five.append(chance_eta_squared(values, persistent(rng, 400, 5), BLOCK, DRAWS, seed))
     assert 0.0 < np.mean(two) < np.mean(five)
 
 
@@ -71,8 +90,25 @@ def test_excess_eta_is_zero_on_average_without_a_real_link() -> None:
     for seed in range(40):
         rng = np.random.default_rng(seed)
         values = rng.normal(size=300)
-        excess.append(excess_eta_squared(values, persistent(rng, 300, 5)))
+        excess.append(excess_eta_squared(values, persistent(rng, 300, 5), BLOCK, DRAWS, seed))
     assert abs(float(np.mean(excess))) < 0.01
+
+
+def test_a_rare_volatile_group_earns_no_separation() -> None:
+    """A group that only marks the volatile weeks knows nothing about direction.
+
+    Sliding the groups in time (the older chance level) leaves it with credit;
+    flipping signs in blocks does not.
+    """
+    flipped, slid = [], []
+    for seed in range(30):
+        rng = np.random.default_rng(seed)
+        hot = rare_volatile_group(rng, 800)
+        values = overlapping_moves(rng, np.where(hot == 1, 4.0, 1.0))
+        flipped.append(excess_eta_squared(values, hot, BLOCK, DRAWS, seed))
+        slid.append(shift_excess_eta_squared(values, hot))
+    assert np.mean(flipped) < 0.004
+    assert np.mean(slid) > 0.008
 
 
 def test_excess_eta_keeps_a_real_link() -> None:
@@ -80,8 +116,27 @@ def test_excess_eta_keeps_a_real_link() -> None:
     groups = persistent(rng, 400, 2)
     values = np.where(groups == 1, 3.0, -3.0) + rng.normal(size=400)
     assert eta_squared(values, groups) > 0.8
-    assert excess_eta_squared(values, groups) > 0.7
-    assert chance_eta_squared(np.array([1.0]), np.array([0])) == 0.0
+    assert excess_eta_squared(values, groups, BLOCK, DRAWS, 0) > 0.7
+
+
+def test_chance_eta_is_reproducible_and_validates_its_arguments() -> None:
+    rng = np.random.default_rng(0)
+    values, groups = rng.normal(size=200), persistent(rng, 200, 3)
+    first = chance_eta_squared(values, groups, BLOCK, 50, seed=3)
+    assert first == chance_eta_squared(values, groups, BLOCK, 50, seed=3)
+    assert first != chance_eta_squared(values, groups, BLOCK, 50, seed=4)
+    assert chance_eta_squared(np.array([1.0]), np.array([0]), BLOCK, 50, seed=0) == 0.0
+    with pytest.raises(ValueError):
+        chance_eta_squared(values, groups, 0, 50, seed=0)
+    with pytest.raises(ValueError):
+        chance_eta_squared(values, groups, BLOCK, 0, seed=0)
+
+
+def test_shift_excess_known_value() -> None:
+    values = np.array([1.0, 3.0, 5.0, 7.0])
+    groups = np.array([0, 0, 1, 1])
+    # eta2 is 0.8; sliding the groups by 1, 2 and 3 rows gives 0, 0.8 and 0
+    assert shift_excess_eta_squared(values, groups) == pytest.approx(0.8 - 0.8 / 3)
 
 
 def test_forward_change_is_in_basis_points_and_blank_at_the_end() -> None:

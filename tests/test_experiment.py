@@ -58,7 +58,11 @@ def test_evaluation_metrics_are_consistent(jump: ConfigEvaluation) -> None:
     assert jump.stability == pytest.approx((jump.s1_mean + jump.s2) / 2.0)
     assert jump.score == pytest.approx(jump.stability * jump.excess_short)
     assert 0.0 < jump.excess_short < jump.eta_short <= 1.0
+    assert jump.excess_short_shift < jump.eta_short
+    assert jump.excess_short_shift != jump.excess_short  # two different chance levels
     metrics = jump.metrics()
+    assert metrics["excess_short"] == jump.excess_short
+    assert metrics["excess_short_shift"] == jump.excess_short_shift
     assert json.loads(json.dumps(metrics)) == metrics
     assert set(metrics["durations"]) == {"0", "1"}
 

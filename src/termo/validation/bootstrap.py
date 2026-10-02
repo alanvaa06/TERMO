@@ -47,7 +47,8 @@ def paired_excess_eta_difference(
 
     The interval comes from resampling the same blocks of rows for both groupings.
     It is then shifted by the difference of their chance levels, so that a grouping
-    with more states gets no head start.
+    with more states, or one that sits on the volatile weeks, gets no head start.
+    Both chance levels use the same sign draws.
     """
     rng = np.random.default_rng(seed)
     raw_point = eta_squared(values, groups_a) - eta_squared(values, groups_b)
@@ -58,7 +59,9 @@ def paired_excess_eta_difference(
             values[rows], groups_b[rows]
         )
     low, high = np.percentile(draws, CONFIDENCE_TAILS)
-    head_start = chance_eta_squared(values, groups_a) - chance_eta_squared(values, groups_b)
+    head_start = chance_eta_squared(
+        values, groups_a, block, n_resamples, seed
+    ) - chance_eta_squared(values, groups_b, block, n_resamples, seed)
     return EtaDifference(
         point=raw_point - head_start, low=float(low) - head_start, high=float(high) - head_start
     )

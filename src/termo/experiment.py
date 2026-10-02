@@ -27,6 +27,7 @@ from termo.validation.metrics import (
     forward_change_bp,
     median_durations,
     run_lengths,
+    shift_excess_eta_squared,
     weekly_last,
 )
 from termo.validation.pbo import block_stats, pbo_cscv
@@ -46,6 +47,7 @@ class ConfigEvaluation:
     eta_short: float  # raw eta-squared of the forward 10Y change, short horizon
     excess_short: float  # the same above its chance level: the separation measure
     excess_long: float
+    excess_short_shift: float  # sensitivity check, never used to decide
     durations: dict[int, float]
     passes_duration: bool
     wcss: float
@@ -64,6 +66,7 @@ class ConfigEvaluation:
             "eta_short": self.eta_short,
             "excess_short": self.excess_short,
             "excess_long": self.excess_long,
+            "excess_short_shift": self.excess_short_shift,
             "score": self.score,
             "durations": {str(state): value for state, value in self.durations.items()},
             "passes_duration": self.passes_duration,
@@ -101,12 +104,29 @@ def separation_frame(labels: pd.Series, yields: pd.Series, horizon: int) -> pd.D
     return pd.DataFrame({"label": weekly, "change": change}).dropna()
 
 
-def separation(labels: pd.Series, yields: pd.Series, horizon: int) -> tuple[float, float]:
-    """(raw eta-squared, excess eta-squared) of the forward change grouped by label."""
+@dataclass(frozen=True)
+class Separation:
+    raw: float  # eta-squared of the forward change grouped by label
+    excess: float  # raw minus its chance level: the measure that decides
+    excess_shift: float  # the same with the older chance level: reported, never decides
+
+
+def _excess(values: np.ndarray, groups: np.ndarray, config: CoreConfig) -> float:
+    boot = config.bootstrap
+    return excess_eta_squared(values, groups, boot.block_weeks, boot.n_resamples, boot.seed)
+
+
+def separation(
+    labels: pd.Series, yields: pd.Series, horizon: int, config: CoreConfig
+) -> Separation:
     frame = separation_frame(labels, yields, horizon)
     values = frame["change"].to_numpy()
     groups = frame["label"].to_numpy().astype(int)
-    return eta_squared(values, groups), excess_eta_squared(values, groups)
+    return Separation(
+        raw=eta_squared(values, groups),
+        excess=_excess(values, groups, config),
+        excess_shift=shift_excess_eta_squared(values, groups),
+    )
 
 
 def make_fitter(n_states: int, jump_penalty: float | None) -> RegimeFitter:
@@ -124,10 +144,8 @@ def evaluate_config(
     minimum = config.thresholds.min_median_duration_days
     passes = all(not math.isnan(value) and value >= minimum for value in durations.values())
     fitted = fitter(data.full_features).insample_labels()
-    eta_short, excess_short = separation(
-        walk.oos_labels, data.yields_10y, config.horizon_short_days
-    )
-    _, excess_long = separation(walk.oos_labels, data.yields_10y, config.horizon_long_days)
+    short = separation(walk.oos_labels, data.yields_10y, config.horizon_short_days, config)
+    long_ = separation(walk.oos_labels, data.yields_10y, config.horizon_long_days, config)
     return ConfigEvaluation(
         n_states=n_states,
         jump_penalty=jump_penalty,
@@ -136,9 +154,10 @@ def evaluate_config(
         s1_min=float(np.min(walk.consecutive_ari)),
         s2=s2,
         stability=stability_score(walk.consecutive_ari, s2),
-        eta_short=eta_short,
-        excess_short=excess_short,
-        excess_long=excess_long,
+        eta_short=short.raw,
+        excess_short=short.excess,
+        excess_long=long_.excess,
+        excess_short_shift=short.excess_shift,
         durations=durations,
         passes_duration=passes,
         wcss=within_cluster_ss(data.full_features.to_numpy(), fitted),
@@ -198,8 +217,8 @@ def holdout_evaluation(data: ExperimentData, n_states: int, jump_penalty: float)
     baseline = weekly_last(inertia_labels(data.refits)).reindex(frame.index)
     values = frame["change"].to_numpy()
     return HoldoutResult(
-        excess_model=excess_eta_squared(values, frame["label"].to_numpy().astype(int)),
-        excess_inertia=excess_eta_squared(values, baseline.to_numpy().astype(int)),
+        excess_model=_excess(values, frame["label"].to_numpy().astype(int), config),
+        excess_inertia=_excess(values, baseline.to_numpy().astype(int), config),
         n_weeks=len(frame),
         n_episodes=len(run_lengths(labels.to_numpy())),
     )

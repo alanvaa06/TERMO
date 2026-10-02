@@ -265,6 +265,9 @@ def test_report_reaches_a_verdict_with_all_criteria(finished: Path, config: Core
     assert details["n_trials"] == 4 and 1 <= details["n_effective"] <= 4
     assert len(details["configurations"]) == 4
     assert set(details["baselines_separation"]) == {"inertia", "kmeans_k2", "kmeans_k3"}
+    # The older measure is reported next to the deciding one, for every model and baseline.
+    assert set(details["baselines_separation_shift"]) == set(details["baselines_separation"])
+    assert all({"separation", "separation_shift"} <= set(row) for row in details["configurations"])
     final = details["final_model"]
     assert final["s1_min"] <= final["s1_mean"] <= 1.0
     assert set(final) == {

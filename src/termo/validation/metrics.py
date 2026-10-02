@@ -8,6 +8,7 @@ from sklearn.metrics import adjusted_rand_score
 
 BP_PER_PERCENT = 100.0
 VARIANCE_FLOOR = 1e-12  # relative; below this the values are constant up to rounding
+SIGNS = np.array([-1.0, 1.0])
 
 
 def adjusted_rand(first: np.ndarray, second: np.ndarray) -> float:
@@ -29,23 +30,51 @@ def eta_squared(values: np.ndarray, groups: np.ndarray) -> float:
     return between / total
 
 
-def chance_eta_squared(values: np.ndarray, groups: np.ndarray) -> float:
-    """Eta-squared that the same group series gets by luck: its mean over every time shift.
+def chance_eta_squared(
+    values: np.ndarray, groups: np.ndarray, block: int, n_draws: int, seed: int
+) -> float:
+    """Eta-squared the same groups get by luck, once the direction of the moves is erased.
 
-    Persistent groups explain some variance of an autocorrelated series by chance,
-    and more groups explain more. Shifting the groups in time keeps their number and
-    their persistence and breaks any real link with `values`.
+    Persistent groups explain some variance of an autocorrelated series by chance, more
+    groups explain more, and a group that sits on the volatile weeks explains more still.
+    Each draw gives a random sign to whole blocks of the centred values: their size stays
+    where it was, next to the same groups, and any real link with direction is broken.
+    """
+    n_rows = len(values)
+    if n_rows < 2:
+        return 0.0
+    if block < 1 or n_draws < 1:
+        raise ValueError("block and n_draws must be positive")
+    rng = np.random.default_rng(seed)
+    centred = values - values.mean()
+    n_blocks = -(-n_rows // block) + 1
+    draws = np.empty(n_draws)
+    for i in range(n_draws):
+        offset = int(rng.integers(0, block))
+        signs = np.repeat(rng.choice(SIGNS, size=n_blocks), block)[offset : offset + n_rows]
+        draws[i] = eta_squared(centred * signs, groups)
+    return float(draws.mean())
+
+
+def excess_eta_squared(
+    values: np.ndarray, groups: np.ndarray, block: int, n_draws: int, seed: int
+) -> float:
+    """Eta-squared above what luck alone gives. This is the separation measure."""
+    return eta_squared(values, groups) - chance_eta_squared(values, groups, block, n_draws, seed)
+
+
+def shift_excess_eta_squared(values: np.ndarray, groups: np.ndarray) -> float:
+    """Sensitivity check only: chance level from sliding the groups in time.
+
+    Sliding the groups breaks their link with volatility as well as with direction, so a
+    rare group that sits on the volatile weeks keeps some credit it did not earn. It is
+    reported next to the separation measure and never decides anything.
     """
     n_rows = len(values)
     if n_rows < 2:
         return 0.0
     shifted = [eta_squared(values, np.roll(groups, shift)) for shift in range(1, n_rows)]
-    return float(np.mean(shifted))
-
-
-def excess_eta_squared(values: np.ndarray, groups: np.ndarray) -> float:
-    """Eta-squared above what luck alone gives. This is the separation measure."""
-    return eta_squared(values, groups) - chance_eta_squared(values, groups)
+    return eta_squared(values, groups) - float(np.mean(shifted))
 
 
 def forward_change_bp(yields: pd.Series, horizon: int) -> pd.Series:

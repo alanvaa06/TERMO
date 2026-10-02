@@ -48,16 +48,36 @@ def test_paired_difference_of_a_grouping_with_itself_is_zero() -> None:
 
 def test_more_states_get_no_head_start() -> None:
     """Five unrelated states against two unrelated states: no advantage after the correction."""
-    raw, corrected = [], []
+    raw, corrected, passes = [], [], 0
     for seed in range(30):
         rng = np.random.default_rng(seed)
         values = rng.normal(size=300)
         five = (rng.integers(0, 5) + np.cumsum(rng.random(300) < 0.05)) % 5
         two = (rng.integers(0, 2) + np.cumsum(rng.random(300) < 0.05)) % 2
         raw.append(eta_squared(values, five) - eta_squared(values, two))
-        corrected.append(paired_excess_eta_difference(values, five, two, 26, 20, seed).point)
-    assert np.mean(raw) > 0.01
-    assert abs(float(np.mean(corrected))) < 0.01
+        result = paired_excess_eta_difference(values, five, two, 26, 200, seed)
+        corrected.append(result.point)
+        passes += result.low > 0  # what the go/no-go criterion looks at
+    assert np.mean(raw) > 0.005
+    assert abs(float(np.mean(corrected))) < 0.005
+    assert passes <= 3  # nominal 2.5%: about 1 of 30
+
+
+def test_a_rare_volatile_group_does_not_pass_the_gate() -> None:
+    """A group that only marks the volatile weeks must not beat an unrelated baseline."""
+    passes = 0
+    for seed in range(30):
+        rng = np.random.default_rng(seed)
+        hot = np.zeros(800, dtype=int)
+        draws = rng.random(800)
+        for t in range(1, 800):  # about 8% of the rows, in runs of about 8
+            hot[t] = (draws[t] > 0.125) if hot[t - 1] == 1 else (draws[t] < 0.0109)
+        shocks = rng.normal(size=804) * np.concatenate([np.where(hot == 1, 4.0, 1.0), [1.0] * 4])
+        total = np.concatenate([[0.0], np.cumsum(shocks)])
+        values = total[5:805] - total[1:801]  # overlapping 4-row moves, no direction
+        baseline = (rng.integers(0, 2) + np.cumsum(rng.random(800) < 0.05)) % 2
+        passes += paired_excess_eta_difference(values, hot, baseline, 26, 200, seed).low > 0
+    assert passes <= 2
 
 
 def test_paired_difference_is_reproducible() -> None:

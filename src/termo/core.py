@@ -57,6 +57,8 @@ KNOWN_LIMITATIONS = (
     "PBO ranks configurations by raw eta-squared, so it favours grids that mix different K.",
     "Velocities are in basis points, so the 1980s can dominate the extreme regimes.",
     "A forward change of exactly zero counts as 'down' in the independence test.",
+    "separation_shift uses the older chance level (groups slid in time). It is a declared "
+    "sensitivity check: it is reported and never decides.",
     "Evidence for jump models comes from equities; these tests are the criterion for rates.",
 )
 
@@ -202,16 +204,20 @@ def run_trials(
         labels_path = trials_dir / LABELS_DIR / f"{trial_id}.csv"
         if spec["model"] == MODEL_INERTIA:
             labels = inertia_labels(data.refits)
-            eta, excess = separation(labels, data.yields_10y, config.horizon_short_days)
+            found = separation(labels, data.yields_10y, config.horizon_short_days, config)
             save_labels(labels, labels_path)
             log.record_result(
                 trial_id,
-                {"eta_short": eta, "excess_short": excess},
+                {
+                    "eta_short": found.raw,
+                    "excess_short": found.excess,
+                    "excess_short_shift": found.excess_shift,
+                },
                 TrialStatus.KEPT,
                 "baseline",
                 str(labels_path),
             )
-            echo(f"[ok] {trial_id} excess_short={excess:.4f}")
+            echo(f"[ok] {trial_id} excess_short={found.excess:.4f}")
             continue
         try:
             evaluation = evaluate_config(data, int(spec["n_states"]), spec.get("jump_penalty"))
@@ -267,6 +273,7 @@ def build_report(
                 "trial_id": c.trial_id,
                 "stability": c.stability,
                 "separation": c.separation,
+                "separation_shift": results[c.trial_id]["metrics"]["excess_short_shift"],
                 "score": c.score,
                 "passes_duration": c.passes_duration,
             }
@@ -274,6 +281,11 @@ def build_report(
         ],
         "baselines_separation": {
             t: results[t]["metrics"]["excess_short"]
+            for t in trial_ids
+            if is_model(t, MODEL_KMEANS) or is_model(t, MODEL_INERTIA)
+        },
+        "baselines_separation_shift": {
+            t: results[t]["metrics"]["excess_short_shift"]
             for t in trial_ids
             if is_model(t, MODEL_KMEANS) or is_model(t, MODEL_INERTIA)
         },
