@@ -7,7 +7,7 @@ import pandas as pd
 import pytest
 
 from termo.data.fred import DataValidationError
-from termo.data.loader import HoldoutAccessError, load_curve
+from termo.data.loader import HoldoutAccessError, load_curve, snapshot_days
 from termo.data.snapshot import SnapshotError, write_snapshot
 
 START = date(2024, 9, 25)
@@ -86,3 +86,32 @@ def test_no_common_day_is_refused(tmp_path: Path) -> None:
     )
     with pytest.raises(DataValidationError, match="no day has a value"):
         load_curve(target, SERIES, START, HOLDOUT)
+
+
+def test_snapshot_days_cover_the_holdout_without_returning_yields(snapshot: Path) -> None:
+    days = snapshot_days(snapshot, SERIES, START)
+    assert isinstance(days, pd.DatetimeIndex)
+    assert list(days.strftime("%Y-%m-%d")) == [
+        "2024-09-25",
+        "2024-09-26",
+        "2024-09-30",
+        "2024-10-01",
+        "2024-10-02",
+    ]
+
+
+def test_snapshot_days_refuse_a_hole_in_the_holdout(tmp_path: Path) -> None:
+    days = pd.bdate_range("2024-09-02", "2025-03-31")
+    full = "".join(f"{d:%Y-%m-%d},4.00\n" for d in days)
+    hole_start, hole_end = pd.Timestamp("2024-11-01"), pd.Timestamp("2025-01-31")
+    holed = "".join(f"{d:%Y-%m-%d},{'' if hole_start <= d <= hole_end else '3.50'}\n" for d in days)
+    target = tmp_path / "snap"
+    write_snapshot(
+        target,
+        {"DGS1": "observation_date,DGS1\n" + full, "DGS2": "observation_date,DGS2\n" + holed},
+        "2026-10-02T00:00:00+00:00",
+    )
+    # The pre-holdout load is fine: the hole is entirely inside the holdout.
+    assert len(load_curve(target, SERIES, date(2024, 9, 2), HOLDOUT)) == 21
+    with pytest.raises(DataValidationError, match="gap of"):
+        snapshot_days(target, SERIES, date(2024, 9, 2))

@@ -41,13 +41,18 @@ def candidate_from_record(
     )
 
 
+def is_eligible(candidate: Candidate) -> bool:
+    """Can this configuration be the final model? Same rule for the winner and for any other."""
+    return candidate.passes_duration and candidate.stability > 0 and candidate.separation > 0
+
+
 def pick_winner(candidates: Sequence[Candidate]) -> Candidate | None:
     """Highest stability x separation among the eligible configurations.
 
     Eligible: passes the duration filter, and both factors are positive. The product of
     two negative numbers would otherwise rank an unstable, unseparated model first.
     """
-    eligible = [c for c in candidates if c.passes_duration and c.stability > 0 and c.separation > 0]
+    eligible = [c for c in candidates if is_eligible(c)]
     if not eligible:
         return None
     return max(eligible, key=lambda c: c.score)

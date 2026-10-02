@@ -9,7 +9,11 @@ from termo.validation.bootstrap import (
     moving_block_indices,
     paired_excess_eta_difference,
 )
-from termo.validation.metrics import eta_squared
+from termo.validation.metrics import (
+    chance_eta_squared,
+    eta_squared,
+    shift_excess_eta_squared,
+)
 
 
 def persistent_groups(n_rows: int, run: int) -> np.ndarray:
@@ -78,6 +82,23 @@ def test_a_rare_volatile_group_does_not_pass_the_gate() -> None:
         baseline = (rng.integers(0, 2) + np.cumsum(rng.random(800) < 0.05)) % 2
         passes += paired_excess_eta_difference(values, hot, baseline, 26, 200, seed).low > 0
     assert passes <= 2
+
+
+def test_the_head_start_is_the_difference_of_sign_flip_chance_levels() -> None:
+    """Pins which chance level corrects the gate: the sign-flip one, never the older one."""
+    rng = np.random.default_rng(0)
+    values = rng.normal(size=300)
+    four = (rng.integers(0, 4) + np.cumsum(rng.random(300) < 0.05)) % 4
+    two = (rng.integers(0, 2) + np.cumsum(rng.random(300) < 0.05)) % 2
+    result = paired_excess_eta_difference(values, four, two, 26, 100, seed=5)
+    raw = eta_squared(values, four) - eta_squared(values, two)
+    head_start = chance_eta_squared(values, four, 26, 100, 5) - chance_eta_squared(
+        values, two, 26, 100, 5
+    )
+    assert result.point == pytest.approx(raw - head_start)
+    older = shift_excess_eta_squared(values, four) - shift_excess_eta_squared(values, two)
+    assert result.point != pytest.approx(older)
+    assert result.high - result.low > 0
 
 
 def test_paired_difference_is_reproducible() -> None:

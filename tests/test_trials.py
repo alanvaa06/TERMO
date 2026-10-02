@@ -19,15 +19,19 @@ def register(log: TrialLog, trial_id: str = "jm_k2_lam50") -> None:
 
 def test_result_without_registration_is_refused(log: TrialLog) -> None:
     with pytest.raises(TrialLogError, match="no prior registration"):
-        log.record_result("jm_k2_lam50", {"score": 0.1}, TrialStatus.KEPT, "", None)
+        log.record_result(
+            "jm_k2_lam50", {"score": 0.1}, TrialStatus.KEPT, "", "labels.csv", "abc123"
+        )
     assert log.records() == []
 
 
 def test_second_result_is_refused(log: TrialLog) -> None:
     register(log)
-    log.record_result("jm_k2_lam50", {"score": 0.1}, TrialStatus.KEPT, "", "labels.csv")
+    log.record_result("jm_k2_lam50", {"score": 0.1}, TrialStatus.KEPT, "", "labels.csv", "abc123")
     with pytest.raises(TrialLogError, match="already has a result"):
-        log.record_result("jm_k2_lam50", {"score": 0.9}, TrialStatus.KEPT, "", "labels.csv")
+        log.record_result(
+            "jm_k2_lam50", {"score": 0.9}, TrialStatus.KEPT, "", "labels.csv", "abc123"
+        )
 
 
 def test_second_registration_is_refused(log: TrialLog) -> None:
@@ -39,7 +43,9 @@ def test_second_registration_is_refused(log: TrialLog) -> None:
 def test_log_is_append_only_json_lines(log: TrialLog) -> None:
     register(log)
     before = log.path.read_text(encoding="utf-8")
-    log.record_result("jm_k2_lam50", {"score": 0.1}, TrialStatus.DISCARDED, "short", None)
+    log.record_result(
+        "jm_k2_lam50", {"score": 0.1}, TrialStatus.DISCARDED, "short", "labels.csv", "abc123"
+    )
     after = log.path.read_text(encoding="utf-8")
     assert after.startswith(before)
     first, second = (json.loads(line) for line in after.splitlines())
@@ -47,6 +53,7 @@ def test_log_is_append_only_json_lines(log: TrialLog) -> None:
     assert first["config"] == {"n_states": 2, "jump_penalty": 50.0}
     assert first["snapshot_hash"] == "hash" and first["code_commit"] == "commit"
     assert second["kind"] == "result" and second["status"] == "discarded"
+    assert second["labels_path"] == "labels.csv" and second["labels_sha256"] == "abc123"
     assert log.is_registered("jm_k2_lam50") and log.has_result("jm_k2_lam50")
     assert set(log.registrations()) == set(log.results()) == {"jm_k2_lam50"}
 
@@ -55,7 +62,7 @@ def test_holdout_opens_once_and_only_for_a_finished_trial(log: TrialLog) -> None
     register(log)
     with pytest.raises(TrialLogError, match="no recorded result"):
         log.open_holdout("jm_k2_lam50")
-    log.record_result("jm_k2_lam50", {"score": 0.1}, TrialStatus.KEPT, "", None)
+    log.record_result("jm_k2_lam50", {"score": 0.1}, TrialStatus.KEPT, "", "labels.csv", "abc123")
     assert not log.holdout_opened()
     log.open_holdout("jm_k2_lam50")
     assert log.holdout_opened()
@@ -65,7 +72,7 @@ def test_holdout_opens_once_and_only_for_a_finished_trial(log: TrialLog) -> None
 
 def test_holdout_result_is_recorded_once_and_only_after_opening(log: TrialLog) -> None:
     register(log)
-    log.record_result("jm_k2_lam50", {"score": 0.1}, TrialStatus.KEPT, "", None)
+    log.record_result("jm_k2_lam50", {"score": 0.1}, TrialStatus.KEPT, "", "labels.csv", "abc123")
     with pytest.raises(TrialLogError, match="has not been opened"):
         log.record_holdout_result({"passed": True})
     log.open_holdout("jm_k2_lam50")

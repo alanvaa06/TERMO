@@ -5,6 +5,7 @@ from termo.selection import (
     Candidate,
     candidate_from_record,
     ftic_states,
+    is_eligible,
     pick_winner,
     simpler_alternative,
 )
@@ -66,6 +67,15 @@ def test_winner_needs_positive_stability_and_separation() -> None:
     assert pick_winner([both_negative, barely_good]) == barely_good
     unseparated = candidate(2, 12.0, stability=0.9, separation=-0.01)
     assert pick_winner([both_negative, unseparated]) is None
+
+
+def test_one_eligibility_rule_for_every_candidate() -> None:
+    """The simpler model that FTIC proposes must clear the same bar as the winner."""
+    assert is_eligible(candidate(2, 80.0))
+    assert not is_eligible(candidate(2, 80.0, passes=False))
+    assert not is_eligible(candidate(2, 80.0, stability=0.0))
+    assert not is_eligible(candidate(2, 80.0, separation=0.0))
+    assert not is_eligible(candidate(2, 80.0, separation=-0.01))
 
 
 def test_ftic_compares_only_the_winning_penalty() -> None:

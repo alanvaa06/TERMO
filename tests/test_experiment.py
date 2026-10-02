@@ -14,10 +14,18 @@ from termo.experiment import (
     holdout_evaluation,
     pbo_of,
     saturated_wcss,
+    separation,
     separation_frame,
 )
 from termo.features.pipeline import FEATURE_NAMES
-from termo.validation.walkforward import inertia_labels
+from termo.regime.model import jump_fitter
+from termo.validation.metrics import (
+    eta_squared,
+    excess_eta_squared,
+    shift_excess_eta_squared,
+    weekly_last,
+)
+from termo.validation.walkforward import inertia_labels, run_walkforward
 
 
 @pytest.fixture(scope="module")
@@ -109,3 +117,42 @@ def test_holdout_evaluation_reads_only_holdout_weeks(
     assert result.n_episodes >= 1
     assert -1.0 <= result.excess_model <= 1.0 and -1.0 <= result.excess_inertia <= 1.0
     assert result.passed == (result.excess_model >= result.excess_inertia)
+
+
+def test_separation_decides_with_the_sign_flip_level(
+    jump: ConfigEvaluation, data: ExperimentData
+) -> None:
+    """Pins which chance level feeds the score and which one is only reported."""
+    config, boot = data.config, data.config.bootstrap
+    frame = separation_frame(jump.oos_labels, data.yields_10y, config.horizon_short_days)
+    values, groups = frame["change"].to_numpy(), frame["label"].to_numpy().astype(int)
+    found = separation(jump.oos_labels, data.yields_10y, config.horizon_short_days, config)
+    assert found.raw == eta_squared(values, groups)
+    assert found.excess == excess_eta_squared(
+        values, groups, boot.block_weeks, boot.n_resamples, boot.seed
+    )
+    assert found.excess_shift == shift_excess_eta_squared(values, groups)
+    assert (jump.eta_short, jump.excess_short, jump.excess_short_shift) == (
+        found.raw,
+        found.excess,
+        found.excess_shift,
+    )
+
+
+def test_holdout_is_judged_with_the_sign_flip_level(
+    curve: pd.DataFrame, config: CoreConfig
+) -> None:
+    full = prepare(curve, config, FEATURE_NAMES)
+    result = holdout_evaluation(full, 2, 50.0)
+
+    walk = run_walkforward(full.refits, jump_fitter(2, 50.0), 2, full.daily_change_10y)
+    labels = walk.oos_labels.loc[pd.Timestamp(config.holdout_start) :]
+    frame = separation_frame(labels, full.yields_10y, config.horizon_short_days)
+    values = frame["change"].to_numpy()
+    model = frame["label"].to_numpy().astype(int)
+    inertia = weekly_last(inertia_labels(full.refits)).reindex(frame.index).to_numpy().astype(int)
+    boot = config.bootstrap
+    draws = (boot.block_weeks, boot.n_resamples, boot.seed)
+    assert result.excess_model == excess_eta_squared(values, model, *draws)
+    assert result.excess_inertia == excess_eta_squared(values, inertia, *draws)
+    assert result.excess_model != shift_excess_eta_squared(values, model)

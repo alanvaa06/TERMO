@@ -29,7 +29,6 @@ class RecordKind(Enum):
 class TrialStatus(Enum):
     KEPT = "kept"
     DISCARDED = "discarded"
-    FAILED = "failed"
 
 
 def _utc_now() -> str:
@@ -90,8 +89,10 @@ class TrialLog:
         metrics: Mapping[str, Any],
         status: TrialStatus,
         reason: str,
-        labels_path: str | None,
+        labels_path: str,
+        labels_sha256: str,
     ) -> None:
+        """`labels_sha256` ties the label file to this record: the report re-reads that file."""
         if not self.is_registered(trial_id):
             raise TrialLogError(f"trial {trial_id} has no prior registration")
         if self.has_result(trial_id):
@@ -105,6 +106,7 @@ class TrialLog:
                 "status": status.value,
                 "reason": reason,
                 "labels_path": labels_path,
+                "labels_sha256": labels_sha256,
             }
         )
 

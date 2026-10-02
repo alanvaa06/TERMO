@@ -36,12 +36,7 @@ def load_curve(
         raise HoldoutAccessError(
             f"end={end} reaches the holdout ({holdout_start}); pass final_evaluation=True"
         )
-    texts = read_snapshot(snapshot_dir)
-    missing = [name for name in series if name not in texts]
-    if missing:
-        raise SnapshotError(f"snapshot lacks series: {missing}")
-
-    frame = complete_days([parse_series_csv(texts[name], name) for name in series], start)
+    frame = _snapshot_frame(snapshot_dir, series, start)
 
     limit: pd.Timestamp | None
     if end is not None:
@@ -54,6 +49,24 @@ def load_curve(
         frame = frame.loc[frame.index <= limit]
     check_coverage(frame, start)
     return frame
+
+
+def snapshot_days(snapshot_dir: Path, series: Sequence[str], start: date) -> pd.DatetimeIndex:
+    """Days on which every series has a value, over the whole snapshot, coverage checked.
+
+    Dates only: a caller can size and validate the holdout without using a single yield.
+    """
+    frame = _snapshot_frame(snapshot_dir, series, start)
+    check_coverage(frame, start)
+    return frame.index
+
+
+def _snapshot_frame(snapshot_dir: Path, series: Sequence[str], start: date) -> pd.DataFrame:
+    texts = read_snapshot(snapshot_dir)
+    missing = [name for name in series if name not in texts]
+    if missing:
+        raise SnapshotError(f"snapshot lacks series: {missing}")
+    return complete_days([parse_series_csv(texts[name], name) for name in series], start)
 
 
 def complete_days(columns: Sequence[pd.Series], start: date) -> pd.DataFrame:

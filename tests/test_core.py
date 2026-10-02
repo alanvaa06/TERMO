@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 from dataclasses import replace
@@ -18,6 +19,7 @@ from termo.core import (
     SETUP_TRIAL,
     build_report,
     config_fingerprint,
+    environment_fingerprint,
     jump_trial_id,
     kmeans_trial_id,
     load_labels,
@@ -33,9 +35,9 @@ from termo.core import (
 from termo.data.fred import DataValidationError
 from termo.data.loader import load_curve
 from termo.data.snapshot import SnapshotError, snapshot_hash
-from termo.dataset import ExperimentData, prepare
-from termo.report import CoreReport, Verdict, report_payload
-from termo.validation.trials import TrialLog, TrialLogError, TrialStatus
+from termo.dataset import prepare
+from termo.report import CoreReport, Verdict, report_payload, write_report
+from termo.validation.trials import TrialLog, TrialLogError
 
 COMMIT = "test-commit"
 
@@ -241,8 +243,75 @@ def test_run_is_resumable_and_never_reruns_a_trial(
 def test_labels_round_trip(workspace: Path, finished: Path, tmp_path: Path) -> None:
     labels = load_labels(workspace / "trials" / "labels" / "jm_k2_lam50.csv")
     assert labels.index.name == "date" and labels.dtype.kind == "i"
-    save_labels(labels, tmp_path / "copy.csv")
+    digest = save_labels(labels, tmp_path / "copy.csv")
     pd.testing.assert_series_equal(load_labels(tmp_path / "copy.csv"), labels)
+    assert digest == hashlib.sha256((tmp_path / "copy.csv").read_bytes()).hexdigest()
+
+
+def test_every_result_records_the_hash_of_its_labels(finished: Path, log: TrialLog) -> None:
+    for trial_id, result in log.results().items():
+        data = Path(result["labels_path"]).read_bytes()
+        assert result["labels_sha256"] == hashlib.sha256(data).hexdigest(), trial_id
+
+
+@pytest.mark.parametrize("which", ["final model", "inertia"])
+def test_report_refuses_labels_that_are_not_the_logged_ones(
+    which: str,
+    finished: Path,
+    workspace: Path,
+    tmp_path: Path,
+    snapshot_data: pd.DataFrame,
+    data_hash: str,
+    log: TrialLog,
+    config: CoreConfig,
+) -> None:
+    """The criteria are recomputed from the label files, so a changed file must be refused."""
+    trials = tmp_path / "trials"
+    shutil.copytree(workspace / "trials", trials)
+    logged = log.last_report()
+    assert logged is not None
+    trial_id = logged["final_trial_id"] if which == "final model" else INERTIA_TRIAL
+    path = trials / "labels" / f"{trial_id}.csv"
+    save_labels(1 - load_labels(path).clip(upper=1), path)
+    data = prepare(snapshot_data, config, registered_columns(log))
+    with pytest.raises(TrialLogError, match=f"labels of {trial_id}"):
+        build_report(data, log, trials, data_hash, COMMIT)
+
+
+def test_a_crash_leaves_the_trial_pending(
+    tmp_path: Path,
+    snapshot_data: pd.DataFrame,
+    config: CoreConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No result is written for a trial that did not finish, so the same command retries it."""
+    fresh = TrialLog(tmp_path / "trials.jsonl")
+    columns = register_trials(config, snapshot_data, fresh, "hash", "commit")
+    data = prepare(snapshot_data, config, columns)
+
+    def out_of_memory(*args: object, **kwargs: object) -> None:
+        raise MemoryError("simulated")
+
+    monkeypatch.setattr("termo.core.evaluate_config", out_of_memory)
+    with pytest.raises(MemoryError):
+        run_trials(data, fresh, tmp_path, "hash", "commit", echo=lambda message: None)
+    assert fresh.results() == {}
+
+
+def test_work_is_bound_to_the_library_versions(
+    finished: Path,
+    log: TrialLog,
+    config: CoreConfig,
+    data_hash: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registered = log.registrations()[SETUP_TRIAL]["config"]["environment"]
+    assert registered == environment_fingerprint()
+    assert set(registered) == {"numpy", "pandas", "scipy", "scikit-learn", "jumpmodels", "python"}
+    other = {**registered, "numpy": "0.0.0"}
+    monkeypatch.setattr("termo.core.environment_fingerprint", lambda: other)
+    with pytest.raises(TrialLogError, match="environment"):
+        verify_binding(log, config, data_hash, COMMIT)
 
 
 def test_report_reaches_a_verdict_with_all_criteria(finished: Path, config: CoreConfig) -> None:
@@ -315,18 +384,6 @@ def test_report_needs_every_result(
         build_report(prepare(snapshot_data, config, columns), fresh, tmp_path, "hash", "commit")
 
 
-def test_report_refuses_an_incomplete_grid(
-    tmp_path: Path, snapshot_data: pd.DataFrame, data: ExperimentData, config: CoreConfig
-) -> None:
-    fresh = TrialLog(tmp_path / "trials.jsonl")
-    register_trials(config, snapshot_data, fresh, "hash", "commit")
-    for trial_id in fresh.registrations():
-        if trial_id != SETUP_TRIAL:
-            fresh.record_result(trial_id, {}, TrialStatus.FAILED, "boom", None)
-    with pytest.raises(TrialLogError, match="failed trials"):
-        build_report(data, fresh, tmp_path, "hash", "commit")
-
-
 def test_stages_need_a_registration_first(tmp_path: Path, config: CoreConfig) -> None:
     empty = TrialLog(tmp_path / "trials.jsonl")
     with pytest.raises(TrialLogError, match="register stage first"):
@@ -339,6 +396,8 @@ def test_final_holdout_needs_a_logged_go_verdict(
     finished: Path, tmp_path: Path, snapshot_dir: Path, log: TrialLog, config: CoreConfig
 ) -> None:
     reports = tmp_path / "reports"
+    # A GO on disk proves nothing: only the log counts.
+    write_report(CoreReport(Verdict.GO, "jm_k2_lam10", criteria=()), reports)
     without_report = TrialLog(tmp_path / "empty.jsonl")
     with pytest.raises(TrialLogError, match="report stage first"):
         run_final_holdout(config, snapshot_dir, without_report, reports, COMMIT)
@@ -383,3 +442,41 @@ def test_final_holdout_runs_exactly_once_and_is_logged(
     assert saved["excess_model"] == logged["excess_model"]
     with pytest.raises(TrialLogError, match="already been opened"):
         run_final_holdout(config, snapshot_dir, copy, reports, COMMIT)
+
+
+def test_the_whole_snapshot_is_checked_before_the_holdout_opens(
+    finished: Path,
+    tmp_path: Path,
+    snapshot_dir: Path,
+    log: TrialLog,
+    config: CoreConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A hole inside the holdout must surface before the one opening is spent."""
+    copy = private_copy(log, tmp_path)
+    copy.record_report(go_report())
+
+    def hole(*args: object, **kwargs: object) -> None:
+        raise DataValidationError("gap of 85 days ending on 1998-09-01")
+
+    monkeypatch.setattr("termo.core.snapshot_days", hole)
+    with pytest.raises(DataValidationError, match="gap of 85 days"):
+        run_final_holdout(config, snapshot_dir, copy, tmp_path, COMMIT)
+    assert not copy.holdout_opened()
+
+
+def test_a_holdout_that_is_too_short_is_refused_before_opening(
+    finished: Path,
+    tmp_path: Path,
+    snapshot_dir: Path,
+    log: TrialLog,
+    config: CoreConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    copy = private_copy(log, tmp_path)
+    copy.record_report(go_report())
+    thirty_days = pd.bdate_range(config.holdout_start, periods=30)
+    monkeypatch.setattr("termo.core.snapshot_days", lambda *args, **kwargs: thirty_days)
+    with pytest.raises(TrialLogError, match="30 holdout days"):
+        run_final_holdout(config, snapshot_dir, copy, tmp_path, COMMIT)
+    assert not copy.holdout_opened()

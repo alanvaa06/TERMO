@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import platform
 from collections.abc import Callable
 from dataclasses import asdict
 from datetime import date
+from importlib import metadata
 from pathlib import Path
 from typing import Any
 
@@ -13,7 +16,7 @@ import pandas as pd
 
 from termo.config import CoreConfig
 from termo.data.fred import fetch_series_csv, parse_series_csv
-from termo.data.loader import check_coverage, complete_days, load_curve
+from termo.data.loader import check_coverage, complete_days, load_curve, snapshot_days
 from termo.data.snapshot import snapshot_hash, write_snapshot
 from termo.dataset import ExperimentData, first_window_columns, prepare
 from termo.experiment import (
@@ -38,6 +41,7 @@ from termo.selection import (
     Candidate,
     candidate_from_record,
     ftic_states,
+    is_eligible,
     pick_winner,
     simpler_alternative,
 )
@@ -50,6 +54,8 @@ INERTIA_TRIAL = "inertia"
 LABELS_DIR = "labels"
 HOLDOUT_JSON = "holdout.json"
 DIRTY_SUFFIX = "-dirty"
+MIN_HOLDOUT_DAYS = 120  # below this the holdout comparison means nothing
+BOUND_PACKAGES = ("numpy", "pandas", "scipy", "scikit-learn", "jumpmodels")
 MODEL_JUMP, MODEL_KMEANS, MODEL_INERTIA = "jump", "kmeans", "inertia"
 KNOWN_LIMITATIONS = (
     "DGS30 between 2002-02-19 and 2006-02-08 is built differently from the rest of the series.",
@@ -87,6 +93,13 @@ def config_fingerprint(config: CoreConfig) -> dict[str, Any]:
     return fingerprint
 
 
+def environment_fingerprint() -> dict[str, str]:
+    """Versions of what computes the results. A different library can give different regimes."""
+    versions = {name: metadata.version(name) for name in BOUND_PACKAGES}
+    versions["python"] = platform.python_version()
+    return versions
+
+
 def take_snapshot(
     config: CoreConfig, snapshot_dir: Path, get: Callable[[str], str], downloaded_at: str
 ) -> None:
@@ -111,7 +124,8 @@ def register_trials(
 ) -> tuple[str, ...]:
     """Write every trial to the log before anything is run. Returns the fixed feature set.
 
-    The setup record binds the experiment to this configuration, snapshot and commit.
+    The setup record binds the experiment to this configuration, snapshot, code and
+    library versions.
     """
     if code_commit.endswith(DIRTY_SUFFIX):
         raise TrialLogError("commit the code and configuration before registering")
@@ -119,7 +133,11 @@ def register_trials(
     log.register(
         SETUP_TRIAL,
         "Feature set fixed on the first training window; every parameter fixed in advance.",
-        {"columns": list(columns), "config": config_fingerprint(config)},
+        {
+            "columns": list(columns),
+            "config": config_fingerprint(config),
+            "environment": environment_fingerprint(),
+        },
         snapshot_hash,
         code_commit,
     )
@@ -168,6 +186,7 @@ def verify_binding(log: TrialLog, config: CoreConfig, snapshot_hash: str, code_c
         name
         for name, registered, current in (
             ("configuration", setup["config"]["config"], config_fingerprint(config)),
+            ("environment", setup["config"]["environment"], environment_fingerprint()),
             ("data snapshot", setup["snapshot_hash"], snapshot_hash),
             ("code commit", setup["code_commit"], code_commit),
         )
@@ -177,13 +196,29 @@ def verify_binding(log: TrialLog, config: CoreConfig, snapshot_hash: str, code_c
         raise TrialLogError("this does not match the registration; changed: " + ", ".join(changed))
 
 
-def save_labels(labels: pd.Series, path: Path) -> None:
+def save_labels(labels: pd.Series, path: Path) -> str:
+    """Write the label series and return the SHA-256 of the file, to be stored in the log."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    labels.rename("label").to_csv(path, index_label="date", lineterminator="\n")
+    text: str = labels.rename("label").to_csv(index_label="date", lineterminator="\n")
+    data = text.encode("utf-8")
+    path.write_bytes(data)
+    return hashlib.sha256(data).hexdigest()
 
 
 def load_labels(path: Path) -> pd.Series:
     return pd.read_csv(path, parse_dates=["date"], index_col="date")["label"]
+
+
+def logged_labels(log: TrialLog, trials_dir: Path, trial_id: str) -> pd.Series:
+    """The labels of a finished trial, refused if the file is not the one the log recorded.
+
+    The report recomputes its criteria from these files, so they are decision inputs.
+    """
+    path = trials_dir / LABELS_DIR / f"{trial_id}.csv"
+    expected = log.results()[trial_id]["labels_sha256"]
+    if hashlib.sha256(path.read_bytes()).hexdigest() != expected:
+        raise TrialLogError(f"the labels of {trial_id} are not the ones recorded in the log")
+    return load_labels(path)
 
 
 def run_trials(
@@ -205,7 +240,6 @@ def run_trials(
         if spec["model"] == MODEL_INERTIA:
             labels = inertia_labels(data.refits)
             found = separation(labels, data.yields_10y, config.horizon_short_days, config)
-            save_labels(labels, labels_path)
             log.record_result(
                 trial_id,
                 {
@@ -215,23 +249,27 @@ def run_trials(
                 },
                 TrialStatus.KEPT,
                 "baseline",
-                str(labels_path),
+                labels_path.as_posix(),
+                save_labels(labels, labels_path),
             )
             echo(f"[ok] {trial_id} excess_short={found.excess:.4f}")
             continue
-        try:
-            evaluation = evaluate_config(data, int(spec["n_states"]), spec.get("jump_penalty"))
-        except Exception as error:
-            log.record_result(trial_id, {}, TrialStatus.FAILED, repr(error), None)
-            raise
-        save_labels(evaluation.oos_labels, labels_path)
+        # An exception leaves no result: the trial stays pending and the same command retries it.
+        evaluation = evaluate_config(data, int(spec["n_states"]), spec.get("jump_penalty"))
         if spec["model"] == MODEL_KMEANS:
             status, reason = TrialStatus.KEPT, "baseline"
         elif evaluation.passes_duration:
             status, reason = TrialStatus.KEPT, ""
         else:
             status, reason = TrialStatus.DISCARDED, "fails the minimum median duration"
-        log.record_result(trial_id, evaluation.metrics(), status, reason, str(labels_path))
+        log.record_result(
+            trial_id,
+            evaluation.metrics(),
+            status,
+            reason,
+            labels_path.as_posix(),
+            save_labels(evaluation.oos_labels, labels_path),
+        )
         echo(f"[ok] {trial_id} score={evaluation.score:.4f} status={status.value}")
 
 
@@ -254,9 +292,6 @@ def build_report(
     pending = [t for t in trial_ids if t not in results]
     if pending:
         raise TrialLogError(f"trials without a result: {pending}")
-    failed = [t for t in trial_ids if results[t]["status"] == TrialStatus.FAILED.value]
-    if failed:
-        raise TrialLogError(f"failed trials, the grid is incomplete: {failed}")
 
     def is_model(trial_id: str, model: str) -> bool:
         return bool(registrations[trial_id]["config"].get("model") == model)
@@ -305,11 +340,10 @@ def build_report(
             details=details,
         )
 
-    labels_dir = trials_dir / LABELS_DIR
-    inertia = load_labels(labels_dir / f"{INERTIA_TRIAL}.csv")
+    inertia = logged_labels(log, trials_dir, INERTIA_TRIAL)
 
     def gates(candidate: Candidate) -> tuple[tuple[Criterion, ...], dict[str, float]]:
-        labels = load_labels(labels_dir / f"{candidate.trial_id}.csv")
+        labels = logged_labels(log, trials_dir, candidate.trial_id)
         gate = gate_tests(labels, inertia, data.yields_10y, config)
         criteria = blocking_criteria(
             candidate.stability, gate.eta_difference, gate.independence.p_value, config.thresholds
@@ -338,7 +372,7 @@ def build_report(
     if ftic_k is not None and ftic_k != winner.n_states:
         notes.append(f"FTIC prefers K={ftic_k}; the score prefers K={winner.n_states}.")
     alternative = simpler_alternative(candidates, winner, ftic_k)
-    if alternative is not None and alternative.passes_duration:
+    if alternative is not None and is_eligible(alternative):
         alt_criteria, alt_summary = gates(alternative)
         if decide(alt_criteria) is Verdict.GO:
             final, criteria, gate_summary = alternative, alt_criteria, alt_summary
@@ -346,7 +380,7 @@ def build_report(
                 "The simpler model passes every blocking criterion: it is the final model."
             )
 
-    labelings = [load_labels(labels_dir / f"{c.trial_id}.csv") for c in candidates]
+    labelings = [logged_labels(log, trials_dir, c.trial_id) for c in candidates]
     pbo = pbo_of(labelings, data.yields_10y, config)
     final_metrics = results[final.trial_id]["metrics"]
     s2 = float(final_metrics["s2"])
@@ -380,9 +414,7 @@ def build_report(
                 "s2": s2,
                 "separation_long": final_metrics["excess_long"],
                 "median_duration_days": final_metrics["durations"],
-                "days_by_decade": _days_by_decade(
-                    load_labels(labels_dir / f"{final.trial_id}.csv")
-                ),
+                "days_by_decade": _days_by_decade(logged_labels(log, trials_dir, final.trial_id)),
             },
         }
     )
@@ -422,8 +454,13 @@ def run_final_holdout(
     verify_binding(log, config, snapshot_hash(snapshot_dir), code_commit)
     spec = log.registrations()[final_trial_id]["config"]
     columns = registered_columns(log)
-    # Reads and validates the whole snapshot, and returns no holdout row.
-    load_curve(snapshot_dir, config.series, config.start, config.holdout_start)
+    # Every file against its hash, and coverage over the whole snapshot, by dates alone.
+    days = snapshot_days(snapshot_dir, config.series, config.start)
+    holdout_days = int((days >= pd.Timestamp(config.holdout_start)).sum())
+    if holdout_days < MIN_HOLDOUT_DAYS:
+        raise TrialLogError(
+            f"the snapshot has {holdout_days} holdout days; at least {MIN_HOLDOUT_DAYS} are needed"
+        )
 
     log.open_holdout(final_trial_id)  # recorded before any holdout row is used
     curve = load_curve(

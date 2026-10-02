@@ -33,27 +33,26 @@ REPORTS_DIR = Path("reports")
 SNAPSHOTS_DIR = Path("data") / "snapshots"
 TRIALS_FILE = "trials.jsonl"
 CODE_PATHS = ("src", "configs", "pyproject.toml")
+REPO_ROOT = Path(__file__).resolve().parents[2]  # src/termo/cli.py -> repository
 
 
-def code_commit() -> str:
-    """Last commit that touched code or configuration, marked dirty if they have changed since.
+def _git(repo: Path, *args: str) -> str:
+    done = subprocess.run(["git", *args], cwd=repo, capture_output=True, text=True, check=True)
+    return done.stdout.strip()
 
-    Only the paths that decide the results count. Snapshots, the trial log, labels and
-    reports are committed while the experiment runs; they must not move this value.
+
+def code_identity(repo: Path = REPO_ROOT) -> str:
+    """What the code and configuration ARE, not when they were committed.
+
+    Git's content hashes of the paths that decide the results, marked dirty if they have
+    uncommitted changes. The value does not move when snapshots, the trial log or reports
+    are committed, nor when history is rewritten without changing the code. It is read
+    from the repository this package runs from, whatever the current directory.
     """
-    head = subprocess.run(
-        ["git", "log", "-1", "--format=%H", "--", *CODE_PATHS],
-        capture_output=True,
-        text=True,
-        check=True,
-    ).stdout.strip()
-    status = subprocess.run(
-        ["git", "status", "--porcelain", "--", *CODE_PATHS],
-        capture_output=True,
-        text=True,
-        check=True,
-    ).stdout.strip()
-    return f"{head}{DIRTY_SUFFIX}" if status else head
+    objects = _git(repo, "rev-parse", *(f"HEAD:{path}" for path in CODE_PATHS)).split()
+    identity = ".".join(objects)
+    dirty = _git(repo, "status", "--porcelain", "--", *CODE_PATHS)
+    return f"{identity}{DIRTY_SUFFIX}" if dirty else identity
 
 
 def _pre_holdout_curve(config: CoreConfig, snapshot_dir: Path) -> pd.DataFrame:
@@ -83,7 +82,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.error("--snapshot is required for this stage")
     snapshot_dir: Path = args.snapshot
 
-    data_hash, commit = snapshot_hash(snapshot_dir), code_commit()
+    data_hash, commit = snapshot_hash(snapshot_dir), code_identity()
 
     if args.stage == "register":
         curve = _pre_holdout_curve(config, snapshot_dir)
