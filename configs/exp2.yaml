@@ -23,7 +23,7 @@ prior_trial_logs: [trials/trials.jsonl]  # counted in the report: 30 trials, ver
 
 grid:
   k: [2, 3, 4, 5]
-  jump_penalty: [0.5, 1.2, 3, 8, 20, 50]
+  jump_penalty: [0.5, 1.2, 3, 8, 20, 50]  # spec 2: per feature, lambda = value * p
 
 horizons_days:
   short: 20

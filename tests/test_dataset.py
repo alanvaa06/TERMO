@@ -108,3 +108,18 @@ def test_frozen_refit_is_one_fit_on_the_past_until_the_frozen_date(
 
 def test_no_frozen_refit_without_a_frozen_date(data: ExperimentData) -> None:
     assert data.frozen_refits == ()
+
+
+def test_frozen_features_ignore_everything_after_the_frozen_date(
+    tyccles_data: ExperimentData, pre_holdout: pd.DataFrame, tyccles_config: CoreConfig
+) -> None:
+    (frozen,) = tyccles_data.frozen_refits
+    altered = pre_holdout.copy()
+    later = altered.index > frozen.cutoff
+    altered.loc[later] = altered.loc[later] * 1.5 + 2.0
+    (again,) = prepare(altered, tyccles_config, tyccles_data.columns).frozen_refits
+    pd.testing.assert_frame_equal(
+        again.features.loc[: frozen.cutoff], frozen.features.loc[: frozen.cutoff]
+    )
+    after = frozen.features.index > frozen.cutoff
+    assert not again.features.loc[after].equals(frozen.features.loc[after])

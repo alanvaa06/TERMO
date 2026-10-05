@@ -82,3 +82,19 @@ def test_tyccles_parameters_go_with_the_tyccles_feature_set(config: CoreConfig) 
 def test_frozen_date_must_lie_inside_the_pre_holdout_sample(config: CoreConfig) -> None:
     with pytest.raises(ValueError, match="frozen_train_end"):
         replace(config, frozen_train_end=config.holdout_start)
+
+
+def test_experiment_2_differs_from_spec_1_only_where_the_spec_says() -> None:
+    base, config = load_config(REPO_CONFIG), load_config(EXP2_CONFIG)
+    aligned = replace(
+        config,
+        burn_in_days=base.burn_in_days,
+        jump_penalties=base.jump_penalties,
+        feature_set=base.feature_set,
+        tyccles=base.tyccles,
+        apply_collinearity_rule=base.apply_collinearity_rule,
+        jump_penalty_per_feature=base.jump_penalty_per_feature,
+        frozen_train_end=base.frozen_train_end,
+        prior_trial_logs=base.prior_trial_logs,
+    )
+    assert aligned == base
