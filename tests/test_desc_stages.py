@@ -17,6 +17,7 @@ from termo.core import SETUP_TRIAL, registered_columns, take_snapshot
 from termo.data.loader import load_curve
 from termo.data.snapshot import snapshot_hash
 from termo.dataset import ExperimentData, prepare
+from termo.descriptive import stages
 from termo.descriptive.criteria import APTO, NO_APTO
 from termo.descriptive.stages import (
     FILES,
@@ -28,6 +29,7 @@ from termo.descriptive.stages import (
     load_analysis,
     register_desc,
     report_desc,
+    restrict,
     run_desc,
 )
 from termo.validation.trials import TrialLog, TrialLogError
@@ -138,6 +140,10 @@ def test_analysis_covers_every_out_of_sample_day_without_look_ahead(
     pd.testing.assert_series_equal(shorter.labels, analysis.labels.loc[common])
     pd.testing.assert_frame_equal(shorter.proba, analysis.proba.loc[common])
     pd.testing.assert_frame_equal(shorter.shap_blocks, analysis.shap_blocks.loc[common])
+    pd.testing.assert_frame_equal(shorter.shap_top, analysis.shap_top.loc[common])
+    frozen_days = shorter.frozen_labels.index
+    assert len(frozen_days) == len(analysis.frozen_labels) - 60
+    pd.testing.assert_series_equal(shorter.frozen_labels, analysis.frozen_labels.loc[frozen_days])
 
 
 def test_run_writes_hashed_files_and_records_the_checks(
@@ -163,7 +169,8 @@ def test_run_never_repeats_and_files_round_trip(
     before = log.path.read_text(encoding="utf-8")
     messages: list[str] = []
     run_desc(data, log, trials_dir, snapshot_hash(snapshot_dir), COMMIT, echo=messages.append)
-    assert messages == [] and log.path.read_text(encoding="utf-8") == before
+    assert messages == ["[ok] desc_k3 already has a result; nothing to run"]
+    assert log.path.read_text(encoding="utf-8") == before
     loaded = load_analysis(
         trials_dir / PRE_HOLDOUT_DIR, log.results()["desc_k3"]["metrics"]["files"]
     )
@@ -212,6 +219,54 @@ def test_report_refuses_tampered_files_and_a_changed_configuration(
         path.write_bytes(original)
 
 
+def test_run_and_report_refuse_data_with_holdout_rows(
+    finished: Path,
+    data: ExperimentData,
+    log: TrialLog,
+    trials_dir: Path,
+    snapshot_dir: Path,
+    desc_config: CoreConfig,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data_hash = snapshot_hash(snapshot_dir)
+    full_curve = load_curve(
+        snapshot_dir,
+        desc_config.series,
+        desc_config.start,
+        desc_config.holdout_start,
+        final_evaluation=True,
+    )
+    assert full_curve.index[-1] >= pd.Timestamp(desc_config.holdout_start)
+    leaking = prepare(full_curve, desc_config, data.columns)
+
+    def never(*args: object, **kwargs: object) -> None:
+        raise AssertionError("nothing may be computed on data with holdout rows")
+
+    monkeypatch.setattr(stages, "analyse", never)
+    monkeypatch.setattr(stages, "load_analysis", never)
+    # a log where the trial is registered but still pending, so run would really run
+    pending = TrialLog(tmp_path / "trials.jsonl")
+    lines = log.path.read_text(encoding="utf-8").splitlines(keepends=True)
+    pending.path.write_text(
+        "".join(line for line in lines if json.loads(line)["kind"] == "registered"),
+        encoding="utf-8",
+    )
+    assert pending.is_registered("desc_k3") and not pending.has_result("desc_k3")
+    before = pending.path.read_text(encoding="utf-8")
+    messages: list[str] = []
+    with pytest.raises(TrialLogError, match="pre-holdout"):
+        run_desc(leaking, pending, tmp_path / "out", data_hash, COMMIT, echo=messages.append)
+    assert messages == [] and pending.path.read_text(encoding="utf-8") == before
+    assert not (tmp_path / "out").exists()
+
+    before = log.path.read_text(encoding="utf-8")
+    with pytest.raises(TrialLogError, match="pre-holdout"):
+        report_desc(leaking, log, trials_dir, tmp_path / "reports", data_hash, COMMIT)
+    assert log.path.read_text(encoding="utf-8") == before
+    assert not (tmp_path / "reports").exists()
+
+
 def _approved_copy(log: TrialLog, tmp_path: Path, verdict: str = APTO) -> TrialLog:
     """A private copy of the finished log whose last report says `verdict`."""
     copy = TrialLog(tmp_path / "trials.jsonl")
@@ -257,6 +312,59 @@ def test_holdout_checks_everything_before_opening(
     assert not copy.holdout_opened()
 
 
+def test_holdout_checks_its_outputs_are_writable_before_opening(
+    finished: Path,
+    tmp_path: Path,
+    snapshot_dir: Path,
+    log: TrialLog,
+    desc_config: CoreConfig,
+) -> None:
+    copy = _approved_copy(log, tmp_path)
+    a_file = tmp_path / "a_file"
+    a_file.write_text("not a directory", encoding="utf-8")
+    good = tmp_path / "good"
+    with pytest.raises(TrialLogError, match="cannot be written"):
+        holdout_desc(desc_config, snapshot_dir, copy, a_file, good / "reports", COMMIT)
+    assert not copy.holdout_opened()
+    with pytest.raises(TrialLogError, match="cannot be written"):
+        holdout_desc(desc_config, snapshot_dir, copy, good / "trials", a_file, COMMIT)
+    assert not copy.holdout_opened()
+    # an output path that cannot be opened as a file (here: it is a directory)
+    (good / "trials" / HOLDOUT_DIR / "proba.csv").mkdir()
+    with pytest.raises(TrialLogError, match="proba.csv"):
+        holdout_desc(desc_config, snapshot_dir, copy, good / "trials", good / "reports", COMMIT)
+    assert not copy.holdout_opened()
+    assert a_file.read_text(encoding="utf-8") == "not a directory"
+    # the probes leave nothing behind
+    assert [p for p in good.rglob("*") if p.is_file()] == []
+
+
+def test_holdout_logs_the_result_before_writing_any_file(
+    finished: Path,
+    tmp_path: Path,
+    snapshot_dir: Path,
+    log: TrialLog,
+    desc_config: CoreConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    copy = _approved_copy(log, tmp_path)
+
+    def full_disk(path: Path, data: bytes) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(stages, "_write_bytes", full_disk)
+    with pytest.raises(OSError, match="disk full"):
+        holdout_desc(
+            desc_config, snapshot_dir, copy, tmp_path / "trials", tmp_path / "reports", COMMIT
+        )
+    kinds = [r["kind"] for r in copy.records()]
+    assert kinds[-2:] == ["holdout_opened", "holdout_result"]
+    logged = copy.records()[-1]
+    assert logged["verdict"] in {APTO, NO_APTO} and len(logged["checks"]) == 7
+    assert set(logged["files"]) == set(FILES)
+    assert all(len(digest) == 64 for digest in logged["files"].values())
+
+
 def test_holdout_runs_once_on_holdout_days_only(
     finished: Path,
     tmp_path: Path,
@@ -275,10 +383,35 @@ def test_holdout_runs_once_on_holdout_days_only(
     logged = copy.records()[-1]
     assert logged["verdict"] == result in {APTO, NO_APTO} and len(logged["checks"]) == 7
     assert logged["days"] == int((curve.index >= start).sum())
+    assert set(logged["files"]) == set(FILES)
+    for name, expected in logged["files"].items():
+        written = (private_trials / HOLDOUT_DIR / name).read_bytes()
+        assert hashlib.sha256(written).hexdigest() == expected
     loaded = load_analysis(private_trials / HOLDOUT_DIR, logged["files"])
     assert loaded.labels.index[0] >= start and loaded.proba.index.equals(loaded.labels.index)
     # the frozen map of the holdout was fitted on everything before it, never on holdout days
     assert loaded.frozen_labels.index.equals(loaded.labels.index)
+    full_curve = load_curve(
+        snapshot_dir,
+        desc_config.series,
+        desc_config.start,
+        desc_config.holdout_start,
+        final_evaluation=True,
+    )
+    last_seen = (start - pd.Timedelta(days=1)).date()
+    frozen_before = replace(desc_config, frozen_train_end=last_seen)
+    expected_analysis = restrict(
+        analyse(prepare(full_curve, frozen_before, registered_columns(copy))), start
+    )
+    pd.testing.assert_series_equal(
+        loaded.frozen_labels,
+        expected_analysis.frozen_labels,
+        check_names=False,
+        check_freq=False,
+        check_dtype=False,
+    )
+    # that cutoff is not the registered frozen date: the stage moved it to the holdout's eve
+    assert frozen_before.frozen_train_end != desc_config.frozen_train_end
     payload = json.loads((reports / "holdout.json").read_text(encoding="utf-8"))
     assert payload["verdict"] == result and payload["stage"] == "holdout"
     assert (reports / "holdout.md").read_text(encoding="utf-8").isascii()

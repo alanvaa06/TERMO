@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import asdict, dataclass, replace
 from datetime import timedelta
 from pathlib import Path
@@ -16,7 +16,7 @@ from typing import Any
 
 import pandas as pd
 
-from termo.config import CoreConfig
+from termo.config import CoreConfig, DescriptiveConfig
 from termo.core import (
     MIN_HOLDOUT_DAYS,
     SETUP_TRIAL,
@@ -60,7 +60,7 @@ def desc_trial_id(config: CoreConfig) -> str:
     return f"desc_k{config.k_values[0]}"
 
 
-def _desc(config: CoreConfig) -> Any:
+def _desc(config: CoreConfig) -> DescriptiveConfig:
     if config.descriptive is None:
         raise TrialLogError("this configuration has no descriptive section")
     return config.descriptive
@@ -132,16 +132,13 @@ def restrict(analysis: Analysis, start: pd.Timestamp) -> Analysis:
     )
 
 
-def _write(frame: pd.DataFrame, path: Path) -> str:
+def _csv_bytes(frame: pd.DataFrame) -> bytes:
     text: str = frame.to_csv(index_label="date", lineterminator="\n")
-    data = text.encode("utf-8")
-    path.write_bytes(data)
-    return hashlib.sha256(data).hexdigest()
+    return text.encode("utf-8")
 
 
-def save_analysis(analysis: Analysis, directory: Path) -> dict[str, str]:
-    """Write the five files and return the SHA-256 of each, to be stored in the log."""
-    directory.mkdir(parents=True, exist_ok=True)
+def analysis_bytes(analysis: Analysis) -> dict[str, bytes]:
+    """The exact bytes of the five files, in memory: what is hashed is what is written."""
     proba = analysis.proba.rename(columns=lambda phase: f"p{phase}")
     frames = {
         "labels.csv": analysis.labels.rename("label").to_frame(),
@@ -150,7 +147,47 @@ def save_analysis(analysis: Analysis, directory: Path) -> dict[str, str]:
         "shap_blocks.csv": analysis.shap_blocks,
         "shap_top.csv": analysis.shap_top,
     }
-    return {name: _write(frames[name], directory / name) for name in FILES}
+    return {name: _csv_bytes(frames[name]) for name in FILES}
+
+
+def hashes_of(contents: Mapping[str, bytes]) -> dict[str, str]:
+    return {name: hashlib.sha256(data).hexdigest() for name, data in contents.items()}
+
+
+def _write_bytes(path: Path, data: bytes) -> None:
+    path.write_bytes(data)
+
+
+def write_files(contents: Mapping[str, bytes], directory: Path) -> None:
+    directory.mkdir(parents=True, exist_ok=True)
+    for name, data in contents.items():
+        _write_bytes(directory / name, data)
+
+
+def save_analysis(analysis: Analysis, directory: Path) -> dict[str, str]:
+    """Write the five files and return the SHA-256 of each, to be stored in the log."""
+    contents = analysis_bytes(analysis)
+    write_files(contents, directory)
+    return hashes_of(contents)
+
+
+def ensure_writable(paths: Iterable[Path]) -> None:
+    """Prove that every path can be written, leaving each exactly as it was found."""
+    for path in paths:
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            existed = path.exists()
+            with path.open("ab"):  # append: an existing file is never truncated
+                pass
+            if not existed:
+                path.unlink()
+        except OSError as error:
+            raise TrialLogError(f"{path.as_posix()} cannot be written: {error}") from error
+
+
+def require_pre_holdout(data: ExperimentData) -> None:
+    if data.curve.index[-1] >= pd.Timestamp(data.config.holdout_start):
+        raise TrialLogError("this stage takes pre-holdout data only: the data has holdout rows")
 
 
 def load_analysis(directory: Path, expected: Mapping[str, str]) -> Analysis:
@@ -226,11 +263,13 @@ def run_desc(
 ) -> None:
     """Run the registered trial on pre-holdout data once. An exception leaves it pending."""
     config = data.config
+    require_pre_holdout(data)
     verify_binding(log, config, snapshot_hash, code_commit)
     trial = desc_trial_id(config)
     if not log.is_registered(trial):
         raise TrialLogError(f"trial {trial} is not registered")
     if log.has_result(trial):
+        echo(f"[ok] {trial} already has a result; nothing to run")
         return
     analysis = analyse(data)
     checks = checks_of(analysis, data.curve, config)
@@ -308,6 +347,7 @@ def report_desc(
 ) -> str:
     """Recompute the checks from the logged files, log the verdict, write the report."""
     config = data.config
+    require_pre_holdout(data)
     verify_binding(log, config, snapshot_hash, code_commit)
     trial = desc_trial_id(config)
     results = log.results()
@@ -366,6 +406,12 @@ def holdout_desc(
         )
     # D5 on the holdout: a model fitted once on everything before it
     frozen_through = replace(config, frozen_train_end=config.holdout_start - timedelta(days=1))
+    found = disclosure(log)
+    directory = trials_dir / HOLDOUT_DIR
+    ensure_writable(
+        [directory / name for name in FILES]
+        + [reports_dir / "holdout.md", reports_dir / "holdout.json"]
+    )
 
     log.open_holdout(trial)  # recorded before any holdout row is used
     curve = load_curve(
@@ -373,8 +419,7 @@ def holdout_desc(
     )
     analysis = restrict(analyse(prepare(curve, frozen_through, columns)), start)
     checks = checks_of(analysis, curve, config)
-    directory = trials_dir / HOLDOUT_DIR
-    files = save_analysis(analysis, directory)
+    contents = analysis_bytes(analysis)
     payload = {
         "stage": "holdout",
         "verdict": verdict(checks),
@@ -382,10 +427,12 @@ def holdout_desc(
         "checks": [asdict(c) for c in checks],
         "days": int(len(analysis.labels)),
         "calibration": calibration(analysis.labels, analysis.proba, CALIBRATION_BINS),
-        "files": files,
+        "files": hashes_of(contents),
         "limits": list(LIMITS),
-        "disclosure": disclosure(log),
+        "disclosure": found,
     }
+    # the verdict is in the log before any file is written: a late I/O error cannot lose it
     log.record_holdout_result(payload)
+    write_files(contents, directory)
     write_report("holdout", "descriptive holdout", "holdout, clean data", payload, reports_dir)
     return str(payload["verdict"])
