@@ -14,6 +14,8 @@ dependencies = [
     "scikit-learn",
     "jumpmodels==0.1.1",
     "pyyaml",
+    "xgboost==3.4.1",
+    "shap==0.52.0",
 ]
 
 [project.optional-dependencies]

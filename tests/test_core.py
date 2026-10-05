@@ -307,7 +307,16 @@ def test_work_is_bound_to_the_library_versions(
 ) -> None:
     registered = log.registrations()[SETUP_TRIAL]["config"]["environment"]
     assert registered == environment_fingerprint()
-    assert set(registered) == {"numpy", "pandas", "scipy", "scikit-learn", "jumpmodels", "python"}
+    assert set(registered) == {
+        "numpy",
+        "pandas",
+        "scipy",
+        "scikit-learn",
+        "jumpmodels",
+        "xgboost",
+        "shap",
+        "python",
+    }
     other = {**registered, "numpy": "0.0.0"}
     monkeypatch.setattr("termo.core.environment_fingerprint", lambda: other)
     with pytest.raises(TrialLogError, match="environment"):
