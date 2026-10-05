@@ -631,7 +631,10 @@ def run_final_holdout(
         snapshot_dir, config.series, config.start, config.holdout_start, final_evaluation=True
     )
     result = holdout_evaluation(
-        prepare(curve, config, columns), int(spec["n_states"]), float(spec["jump_penalty"])
+        prepare(curve, config, columns),
+        int(spec["n_states"]),
+        None if spec.get("jump_penalty") is None else float(spec["jump_penalty"]),
+        frozen=spec["model"] == MODEL_KMEANS_FROZEN,
     )
     payload = {**asdict(result), "passed": result.passed, "final_trial_id": final_trial_id}
     log.record_holdout_result(payload)

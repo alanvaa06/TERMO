@@ -60,16 +60,28 @@ def _pre_holdout_curve(config: CoreConfig, snapshot_dir: Path) -> pd.DataFrame:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="termo", description="TERMO spec 1: core go/no-go")
+    parser = argparse.ArgumentParser(prog="termo", description="TERMO: core go/no-go experiments")
     parser.add_argument("stage", choices=["snapshot", "register", "run", "report", "final-holdout"])
     parser.add_argument("--config", type=Path, default=Path("configs/core.yaml"))
     parser.add_argument(
         "--snapshot", type=Path, help="snapshot directory (all stages but snapshot)"
     )
+    parser.add_argument(
+        "--trials-dir",
+        type=Path,
+        default=TRIALS_DIR,
+        help="trial log and labels directory (default: trials)",
+    )
+    parser.add_argument(
+        "--reports-dir",
+        type=Path,
+        default=REPORTS_DIR,
+        help="report directory (default: reports)",
+    )
     args = parser.parse_args(argv)
 
     config = load_config(args.config)
-    log = TrialLog(TRIALS_DIR / TRIALS_FILE)
+    log = TrialLog(args.trials_dir / TRIALS_FILE)
 
     if args.stage == "snapshot":
         now = datetime.now(UTC)
@@ -92,17 +104,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         verify_binding(log, config, data_hash, commit)  # before any computation
         curve = _pre_holdout_curve(config, snapshot_dir)
         data = prepare(curve, config, registered_columns(log))
-        run_trials(data, log, TRIALS_DIR, data_hash, commit)
+        run_trials(data, log, args.trials_dir, data_hash, commit)
         print("[ok] all registered trials have a result")
     elif args.stage == "report":
         verify_binding(log, config, data_hash, commit)
         curve = _pre_holdout_curve(config, snapshot_dir)
         data = prepare(curve, config, registered_columns(log))
-        report = build_report(data, log, TRIALS_DIR, data_hash, commit)
-        publish_report(report, log, REPORTS_DIR, data_hash, commit)
-        print(f"[ok] verdict: {report.verdict.value} -> {REPORTS_DIR.as_posix()}/go_no_go.md")
+        report = build_report(data, log, args.trials_dir, data_hash, commit)
+        publish_report(report, log, args.reports_dir, data_hash, commit)
+        print(f"[ok] verdict: {report.verdict.value} -> {args.reports_dir.as_posix()}/go_no_go.md")
     else:
-        result = run_final_holdout(config, snapshot_dir, log, REPORTS_DIR, commit)
+        result = run_final_holdout(config, snapshot_dir, log, args.reports_dir, commit)
         mark = "[ok]" if result.passed else "[x]"
         print(
             f"{mark} holdout: excess_model={result.excess_model:.4f} "

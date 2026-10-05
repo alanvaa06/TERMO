@@ -25,6 +25,7 @@ from termo.core import (
     publish_report,
     register_trials,
     registered_columns,
+    run_final_holdout,
     run_trials,
     take_snapshot,
 )
@@ -166,3 +167,15 @@ def test_the_report_judges_each_family_and_discloses_every_trial(
     assert "## Families" in markdown and "## Disclosure" in markdown
     assert "Total registered trials: 11" in markdown
     assert log.last_report() is not None and log.last_report()["verdict"] == payload["verdict"]
+
+
+def test_final_holdout_runs_the_frozen_family(
+    finished: Path, tmp_path: Path, snapshot_dir: Path, log: TrialLog, exp2_config: CoreConfig
+) -> None:
+    copy = TrialLog(tmp_path / "trials.jsonl")
+    copy.path.write_text(log.path.read_text(encoding="utf-8"), encoding="utf-8")
+    copy.record_report(report_payload(CoreReport(Verdict.GO, "kmf_k2", criteria=())))
+    result = run_final_holdout(exp2_config, snapshot_dir, copy, tmp_path / "reports", COMMIT)
+    assert result.n_weeks > 0 and copy.records()[-1]["final_trial_id"] == "kmf_k2"
+    with pytest.raises(TrialLogError, match="already been opened"):
+        run_final_holdout(exp2_config, snapshot_dir, copy, tmp_path / "reports", COMMIT)

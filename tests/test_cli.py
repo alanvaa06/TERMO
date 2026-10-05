@@ -188,3 +188,56 @@ def test_the_command_line_runs_the_stages_and_enforces_the_binding(
     with pytest.raises(TrialLogError):  # no GO verdict, or the changed code: refused either way
         main(["final-holdout", *stage])
     assert log_path.read_text(encoding="utf-8").count("\n") == len(records)
+
+
+EXP2_SMALL_CONFIG = (
+    (
+        SMALL_CONFIG
+        + """feature_set: tyccles
+tyccles:
+  change_horizons_days: [21, 42, 63, 84, 126, 189]
+  rank_windows_days: [126, 252]
+  vol_window_days: 21
+  vol_rank_window_days: 252
+apply_collinearity_rule: false
+jump_penalty_per_feature: true
+frozen_train_end: 1995-12-31
+"""
+    )
+    .replace("burn_in_days: 252", "burn_in_days: 504")
+    .replace("jump_penalty: [10, 50]", "jump_penalty: [0.5, 3]")
+)
+
+
+def test_trials_and_reports_directories_are_arguments(
+    tmp_path: Path,
+    curve: pd.DataFrame,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    config_path = tmp_path / "exp2.yaml"
+    config_path.write_text(EXP2_SMALL_CONFIG, encoding="utf-8")
+    monkeypatch.setattr("termo.cli.http_get", fake_fred(curve))
+    monkeypatch.setattr("termo.cli.code_identity", lambda: "code-2")
+    base = ["--config", str(config_path)]
+    assert main(["snapshot", *base]) == 0
+    (snapshot,) = (tmp_path / "data" / "snapshots").iterdir()
+    stage = [
+        *base,
+        "--snapshot",
+        str(snapshot),
+        "--trials-dir",
+        "trials/exp2",
+        "--reports-dir",
+        "reports/exp2",
+    ]
+    assert main(["register", *stage]) == 0
+    assert (tmp_path / "trials" / "exp2" / "trials.jsonl").exists()
+    assert not (tmp_path / "trials" / "trials.jsonl").exists()
+    assert main(["run", *stage]) == 0
+    assert (tmp_path / "trials" / "exp2" / "labels" / "kmf_k2.csv").exists()
+    assert main(["report", *stage]) == 0
+    out = capsys.readouterr().out
+    assert out.isascii() and "reports/exp2/go_no_go.md" in out
+    assert (tmp_path / "reports" / "exp2" / "go_no_go.json").exists()
