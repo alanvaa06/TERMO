@@ -10,6 +10,7 @@ import pandas as pd
 from jumpmodels.preprocess import DataClipperStd, StandardScalerPD
 
 from termo.features.pca import BP_PER_PERCENT, CurvePCA
+from termo.features.recipes import FittedRecipe, Recipe
 from termo.features.velocity import smoothed_change
 from termo.features.volatility import ewm_vol
 
@@ -58,19 +59,53 @@ def raw_features(curve: pd.DataFrame, pca: CurvePCA) -> pd.DataFrame:
 
 
 @dataclass(frozen=True, eq=False)
-class FittedPipeline:
+class FittedPcaRecipe:
+    """Spec 1: PCA scores, velocities and log volatilities, loadings fixed on the window."""
+
     pca: CurvePCA
+
+    @property
+    def names(self) -> tuple[str, ...]:
+        return FEATURE_NAMES
+
+    def raw(self, curve: pd.DataFrame) -> pd.DataFrame:
+        return raw_features(curve, self.pca)
+
+    def level_change(self, curve: pd.DataFrame) -> pd.Series:
+        return raw_features(curve, self.pca)[LEVEL_CHANGE]
+
+
+@dataclass(frozen=True)
+class PcaRecipe:
+    @property
+    def names(self) -> tuple[str, ...]:
+        return FEATURE_NAMES
+
+    def fit(self, window: pd.DataFrame) -> FittedPcaRecipe:
+        return FittedPcaRecipe(pca=CurvePCA.fit(window))
+
+
+PCA_RECIPE: Recipe = PcaRecipe()
+
+
+@dataclass(frozen=True, eq=False)
+class FittedPipeline:
+    recipe: FittedRecipe
     columns: tuple[str, ...]
     burn_in: int
     clipper: DataClipperStd
     scaler: StandardScalerPD
 
     def raw(self, curve: pd.DataFrame) -> pd.DataFrame:
-        """All 12 raw features after the burn-in. `curve` must start at the sample start."""
-        raw = raw_features(curve, self.pca).iloc[self.burn_in :]
+        """All raw features after the burn-in. `curve` must start at the sample start."""
+        raw = self.recipe.raw(curve).iloc[self.burn_in :]
         if not np.isfinite(raw.to_numpy()).all():
             raise ValueError("non-finite feature values after the burn-in")
         return raw
+
+    def level_change(self, curve: pd.DataFrame) -> pd.Series:
+        """Raw smoothed 63-day change of the level after the burn-in, for the inertia baseline."""
+        return self.recipe.level_change(curve).iloc[self.burn_in :]
 
     def transform(self, curve: pd.DataFrame) -> pd.DataFrame:
         selected = self.raw(curve)[list(self.columns)]
@@ -83,18 +118,19 @@ def fit_pipeline(
     columns: Sequence[str],
     burn_in: int,
     train_start: pd.Timestamp | None = None,
+    recipe: Recipe = PCA_RECIPE,
 ) -> FittedPipeline:
-    """Fit PCA, clipping bounds and z-score on the training window only."""
+    """Fit the recipe, clipping bounds and z-score on the training window only."""
     window = curve.loc[:train_end] if train_start is None else curve.loc[train_start:train_end]
-    pca = CurvePCA.fit(window)
-    raw = raw_features(curve.loc[:train_end], pca).iloc[burn_in:]
+    fitted = recipe.fit(window)
+    raw = fitted.raw(curve.loc[:train_end]).iloc[burn_in:]
     train = raw.loc[window.index[0] :, list(columns)]
     if train.empty:
         raise ValueError("training window is empty after the burn-in")
     clipper = DataClipperStd(mul=CLIP_STD).fit(train)
     scaler = StandardScalerPD().fit(clipper.transform(train))
     return FittedPipeline(
-        pca=pca, columns=tuple(columns), burn_in=burn_in, clipper=clipper, scaler=scaler
+        recipe=fitted, columns=tuple(columns), burn_in=burn_in, clipper=clipper, scaler=scaler
     )
 
 

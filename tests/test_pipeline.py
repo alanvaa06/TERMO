@@ -63,7 +63,7 @@ def test_fit_uses_the_training_window_only(curve: pd.DataFrame, train_end: pd.Ti
     altered.loc[altered.index > train_end] += 2.0
     original = fit_pipeline(curve, train_end, FEATURE_NAMES, BURN_IN)
     refit = fit_pipeline(altered, train_end, FEATURE_NAMES, BURN_IN)
-    assert np.array_equal(original.pca.loadings, refit.pca.loadings)
+    assert np.array_equal(original.recipe.pca.loadings, refit.recipe.pca.loadings)
     assert np.array_equal(original.clipper.lb, refit.clipper.lb)
     assert np.array_equal(original.scaler.scaler.mean_, refit.scaler.scaler.mean_)
     pd.testing.assert_frame_equal(
@@ -77,12 +77,12 @@ def test_training_window_can_start_late(curve: pd.DataFrame) -> None:
     window = late.transform(curve).loc[start:]
     assert np.allclose(window.mean().to_numpy(), 0.0, atol=1e-8)
     early = fit_pipeline(curve, end, FEATURE_NAMES, BURN_IN)
-    assert not np.allclose(late.pca.mean_level, early.pca.mean_level)
+    assert not np.allclose(late.recipe.pca.mean_level, early.recipe.pca.mean_level)
 
 
 def test_vol_features_are_logs(curve: pd.DataFrame, train_end: pd.Timestamp) -> None:
     pipeline = fit_pipeline(curve, train_end, FEATURE_NAMES, BURN_IN)
-    raw = raw_features(curve, pipeline.pca)
+    raw = raw_features(curve, pipeline.recipe.pca)
     changes = curve["DGS5"].diff() * 100.0
     vol60 = np.sqrt((changes**2).ewm(halflife=60).mean())
     vol20 = np.sqrt((changes**2).ewm(halflife=20).mean())

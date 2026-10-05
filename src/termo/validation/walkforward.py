@@ -7,7 +7,8 @@ from dataclasses import dataclass
 
 import pandas as pd
 
-from termo.features.pipeline import LEVEL_CHANGE, fit_pipeline
+from termo.features.pipeline import PCA_RECIPE, fit_pipeline
+from termo.features.recipes import Recipe
 from termo.regime.align import apply_permutation, match_to_reference, order_by_target
 from termo.regime.model import RegimeFitter
 from termo.validation.metrics import adjusted_rand
@@ -18,7 +19,7 @@ class RefitData:
     cutoff: pd.Timestamp  # last training day
     block_end: pd.Timestamp  # last day read with this fit
     features: pd.DataFrame  # standardized, every feature date up to block_end
-    level_change: pd.Series  # raw smoothed 63-day change of L, same dates
+    level_change: pd.Series  # raw smoothed 63-day change of the level, same dates
 
 
 @dataclass(frozen=True, eq=False)
@@ -50,20 +51,24 @@ def refit_cutoffs(
 
 
 def build_refits(
-    curve: pd.DataFrame, cutoffs: Sequence[pd.Timestamp], columns: Sequence[str], burn_in: int
+    curve: pd.DataFrame,
+    cutoffs: Sequence[pd.Timestamp],
+    columns: Sequence[str],
+    burn_in: int,
+    recipe: Recipe = PCA_RECIPE,
 ) -> list[RefitData]:
     """Fit the feature pipeline at every cutoff. Shared by all model configurations."""
     block_ends = [*cutoffs[1:], curve.index[-1]]
     refits: list[RefitData] = []
     for cutoff, block_end in zip(cutoffs, block_ends, strict=True):
-        pipeline = fit_pipeline(curve, cutoff, columns, burn_in)
+        pipeline = fit_pipeline(curve, cutoff, columns, burn_in, recipe=recipe)
         visible = curve.loc[:block_end]
         refits.append(
             RefitData(
                 cutoff=cutoff,
                 block_end=block_end,
                 features=pipeline.transform(visible),
-                level_change=pipeline.raw(visible)[LEVEL_CHANGE],
+                level_change=pipeline.level_change(visible),
             )
         )
     return refits
