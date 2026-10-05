@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import replace
 from pathlib import Path
 
@@ -125,3 +126,43 @@ def test_frozen_results_carry_the_family_markers(finished: Path, log: TrialLog) 
     jump = results["jm_k2_lam0.5"]["metrics"]
     assert jump["frozen"] is False and jump["jump_penalty_effective"] == pytest.approx(69.5)
     assert results[kmeans_trial_id(2)]["reason"] == "baseline"
+
+
+def test_the_report_judges_each_family_and_discloses_every_trial(
+    finished: Path, log: TrialLog, exp2_config: CoreConfig
+) -> None:
+    payload = json.loads((finished / "go_no_go.json").read_text(encoding="utf-8"))
+    details = payload["details"]
+    families = details["families"]
+    assert set(families) <= {"jump", "kmeans_frozen"} and families
+    for family, outcome in families.items():
+        assert outcome["verdict"] in {"go", "no-go"}
+        assert [c["name"] for c in outcome["criteria"]] == [
+            "stability",
+            "separation_vs_inertia_low95",
+            "independence_p",
+            "pbo",
+            "s2_halves",
+        ]
+        assert outcome["final_trial_id"].startswith("jm_" if family == "jump" else "kmf_")
+    chosen = details["chosen_family"]
+    assert chosen in families
+    assert payload["final_trial_id"] == families[chosen]["final_trial_id"]
+    assert payload["verdict"] == families[chosen]["verdict"]
+    assert (payload["verdict"] == "go") == any(f["verdict"] == "go" for f in families.values())
+    if "kmeans_frozen" in families:
+        assert families["kmeans_frozen"]["final_model"]["s1_mean"] is None
+        assert families["kmeans_frozen"]["ftic_states"] is None
+    disclosure = details["disclosure"]
+    assert disclosure["n_trials_this_log"] == 9
+    assert disclosure["prior_logs"] == [
+        {"path": exp2_config.prior_trial_logs[0], "n_trials": 2, "verdict": "no-go"}
+    ]
+    assert disclosure["n_trials_total"] == 11
+    assert set(details["baselines_separation"]) == {"inertia", "kmeans_k2", "kmeans_k3"}
+    assert any("reconstructed" in line for line in details["limitations"])
+    markdown = (finished / "go_no_go.md").read_text(encoding="utf-8")
+    assert markdown.isascii()
+    assert "## Families" in markdown and "## Disclosure" in markdown
+    assert "Total registered trials: 11" in markdown
+    assert log.last_report() is not None and log.last_report()["verdict"] == payload["verdict"]

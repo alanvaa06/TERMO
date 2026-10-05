@@ -32,7 +32,7 @@ def candidate_from_record(
     return Candidate(
         trial_id=trial_id,
         n_states=int(config["n_states"]),
-        jump_penalty=float(config["jump_penalty"]),
+        jump_penalty=float(config.get("jump_penalty", 0.0)),
         stability=float(metrics["stability"]),
         separation=float(metrics["excess_short"]),
         passes_duration=bool(metrics["passes_duration"]),

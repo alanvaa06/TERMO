@@ -93,6 +93,33 @@ def render_markdown(report: CoreReport) -> str:
         lines.append(f"| {c.name} | {c.value:.4f} | {c.requirement} | {result} | {blocking} |")
     if report.notes:
         lines += ["", "## Notes", ""] + [f"- {note}" for note in report.notes]
+    families = report.details.get("families")
+    if families:
+        chosen = report.details.get("chosen_family")
+        lines += [
+            "",
+            "## Families",
+            "",
+            "| Family | Verdict | Final model | Separation vs inertia (low 95%) | |",
+            "|---|---|---|---|---|",
+        ]
+        for name, outcome in families.items():
+            low = outcome["gate"]["eta_difference_low"]
+            mark = "chosen" if name == chosen else ""
+            lines.append(
+                f"| {name} | {str(outcome['verdict']).upper()} | `{outcome['final_trial_id']}` "
+                f"| {low:.4f} | {mark} |"
+            )
+    disclosure = report.details.get("disclosure")
+    if disclosure:
+        lines += ["", "## Disclosure", ""]
+        lines.append(f"- Trials in this log: {disclosure['n_trials_this_log']}")
+        for prior in disclosure["prior_logs"]:
+            lines.append(
+                f"- {prior['path']}: {prior['n_trials']} trials, verdict {prior['verdict']}"
+            )
+        lines.append(f"- Total registered trials: {disclosure['n_trials_total']}")
+        lines.append(f"- {disclosure['note']}")
     lines += ["", "## Details", "", "```json", json.dumps(report.details, indent=2), "```", ""]
     return "\n".join(lines)
 

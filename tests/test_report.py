@@ -85,3 +85,41 @@ def test_report_files(tmp_path: Path) -> None:
         "blocking": True,
     }
     assert payload["details"] == {"n_trials": 24}
+
+
+def test_markdown_lists_families_and_disclosure_when_present() -> None:
+    report = CoreReport(
+        Verdict.NO_GO,
+        "kmf_k3",
+        criteria=(),
+        details={
+            "chosen_family": "kmeans_frozen",
+            "families": {
+                "jump": {
+                    "verdict": "no-go",
+                    "final_trial_id": "jm_k2_lam0.5",
+                    "gate": {"eta_difference_low": -0.01},
+                },
+                "kmeans_frozen": {
+                    "verdict": "no-go",
+                    "final_trial_id": "kmf_k3",
+                    "gate": {"eta_difference_low": -0.002},
+                },
+            },
+            "disclosure": {
+                "n_trials_this_log": 33,
+                "prior_logs": [{"path": "trials/trials.jsonl", "n_trials": 30, "verdict": "no-go"}],
+                "n_trials_total": 63,
+                "note": "The pre-holdout data were already examined.",
+            },
+        },
+    )
+    text = render_markdown(report)
+    assert (
+        "## Families" in text and "| kmeans_frozen | NO-GO | `kmf_k3` | -0.0020 | chosen |" in text
+    )
+    assert "## Disclosure" in text
+    assert "- Trials in this log: 33" in text
+    assert "- trials/trials.jsonl: 30 trials, verdict no-go" in text
+    assert "- Total registered trials: 63" in text
+    assert text.isascii()

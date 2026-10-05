@@ -6,7 +6,7 @@ import hashlib
 import json
 import platform
 from collections.abc import Callable
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from datetime import date
 from importlib import metadata
 from pathlib import Path
@@ -338,65 +338,61 @@ def _days_by_decade(labels: pd.Series) -> dict[str, dict[str, int]]:
     return table
 
 
-def build_report(
-    data: ExperimentData, log: TrialLog, trials_dir: Path, snapshot_hash: str, code_commit: str
-) -> CoreReport:
+@dataclass(frozen=True)
+class FamilyOutcome:
+    family: str
+    score_winner: Candidate
+    final: Candidate
+    criteria: tuple[Criterion, ...]
+    notes: tuple[str, ...]
+    gate: dict[str, float]
+    ftic_states: int | None
+    pbo: float
+    n_candidates: int
+    n_effective: int
+    final_model: dict[str, Any]
+
+    @property
+    def verdict(self) -> Verdict:
+        return decide(self.criteria)
+
+    @property
+    def separation_low(self) -> float:
+        return self.gate["eta_difference_low"]
+
+    def payload(self) -> dict[str, Any]:
+        return {
+            "verdict": self.verdict.value,
+            "score_winner": self.score_winner.trial_id,
+            "final_trial_id": self.final.trial_id,
+            "criteria": [asdict(c) for c in self.criteria],
+            "notes": list(self.notes),
+            "gate": self.gate,
+            "ftic_states": self.ftic_states,
+            "pbo": self.pbo,
+            "n_trials": self.n_candidates,
+            "n_effective": self.n_effective,
+            "final_model": self.final_model,
+        }
+
+
+def _family_outcome(
+    family: str,
+    candidates: list[Candidate],
+    data: ExperimentData,
+    log: TrialLog,
+    trials_dir: Path,
+    inertia: pd.Series,
+) -> FamilyOutcome | None:
+    """Winner, gates, FTIC (jump family only), PBO and S2 of one family.
+
+    None if nothing is eligible.
+    """
     config = data.config
-    verify_binding(log, config, snapshot_hash, code_commit)
-    registrations, results = log.registrations(), log.results()
-    trial_ids = [t for t in registrations if t != SETUP_TRIAL]
-    pending = [t for t in trial_ids if t not in results]
-    if pending:
-        raise TrialLogError(f"trials without a result: {pending}")
-
-    def is_model(trial_id: str, model: str) -> bool:
-        return bool(registrations[trial_id]["config"].get("model") == model)
-
-    candidates = [
-        candidate_from_record(t, registrations[t]["config"], results[t]["metrics"])
-        for t in trial_ids
-        if is_model(t, MODEL_JUMP)
-    ]
-    details: dict[str, object] = {
-        "columns": list(data.columns),
-        "configurations": [
-            {
-                "trial_id": c.trial_id,
-                "stability": c.stability,
-                "separation": c.separation,
-                "separation_shift": results[c.trial_id]["metrics"]["excess_short_shift"],
-                "score": c.score,
-                "passes_duration": c.passes_duration,
-            }
-            for c in candidates
-        ],
-        "baselines_separation": {
-            t: results[t]["metrics"]["excess_short"]
-            for t in trial_ids
-            if is_model(t, MODEL_KMEANS) or is_model(t, MODEL_INERTIA)
-        },
-        "baselines_separation_shift": {
-            t: results[t]["metrics"]["excess_short_shift"]
-            for t in trial_ids
-            if is_model(t, MODEL_KMEANS) or is_model(t, MODEL_INERTIA)
-        },
-        "limitations": list(KNOWN_LIMITATIONS),
-    }
-
+    results = log.results()
     winner = pick_winner(candidates)
     if winner is None:
-        return CoreReport(
-            verdict=Verdict.NO_GO,
-            final_trial_id=None,
-            criteria=(),
-            notes=(
-                "No configuration passes the minimum median duration "
-                "with positive stability and positive separation.",
-            ),
-            details=details,
-        )
-
-    inertia = logged_labels(log, trials_dir, INERTIA_TRIAL)
+        return None
 
     def gates(candidate: Candidate) -> tuple[tuple[Criterion, ...], dict[str, float]]:
         labels = logged_labels(log, trials_dir, candidate.trial_id)
@@ -416,25 +412,27 @@ def build_report(
     final = winner
     criteria, gate_summary = gates(winner)
     notes: list[str] = []
-    n_obs, n_features = data.full_features.shape
-    ftic_k = ftic_states(
-        candidates,
-        winner.jump_penalty,
-        wcss_saturated=saturated_wcss(data),
-        n_obs=n_obs,
-        n_features=n_features,
-        config=config.ftic,
-    )
-    if ftic_k is not None and ftic_k != winner.n_states:
-        notes.append(f"FTIC prefers K={ftic_k}; the score prefers K={winner.n_states}.")
-    alternative = simpler_alternative(candidates, winner, ftic_k)
-    if alternative is not None and is_eligible(alternative):
-        alt_criteria, alt_summary = gates(alternative)
-        if decide(alt_criteria) is Verdict.GO:
-            final, criteria, gate_summary = alternative, alt_criteria, alt_summary
-            notes.append(
-                "The simpler model passes every blocking criterion: it is the final model."
-            )
+    ftic_k: int | None = None
+    if family == MODEL_JUMP:
+        n_obs, n_features = data.full_features.shape
+        ftic_k = ftic_states(
+            candidates,
+            winner.jump_penalty,
+            wcss_saturated=saturated_wcss(data),
+            n_obs=n_obs,
+            n_features=n_features,
+            config=config.ftic,
+        )
+        if ftic_k is not None and ftic_k != winner.n_states:
+            notes.append(f"FTIC prefers K={ftic_k}; the score prefers K={winner.n_states}.")
+        alternative = simpler_alternative(candidates, winner, ftic_k)
+        if alternative is not None and is_eligible(alternative):
+            alt_criteria, alt_summary = gates(alternative)
+            if decide(alt_criteria) is Verdict.GO:
+                final, criteria, gate_summary = alternative, alt_criteria, alt_summary
+                notes.append(
+                    "The simpler model passes every blocking criterion: it is the final model."
+                )
 
     labelings = [logged_labels(log, trials_dir, c.trial_id) for c in candidates]
     pbo = pbo_of(labelings, data.yields_10y, config)
@@ -444,41 +442,151 @@ def build_report(
     extra = (
         Criterion("pbo", pbo, f"<= {thresholds.pbo_max}", pbo <= thresholds.pbo_max, False),
         Criterion(
-            "s2_halves",
-            s2,
-            f">= {thresholds.stability_min}",
-            s2 >= thresholds.stability_min,
-            False,
+            "s2_halves", s2, f">= {thresholds.stability_min}", s2 >= thresholds.stability_min, False
         ),
     )
     if pbo > thresholds.pbo_max:
         notes.append("PBO above the limit: prune the grid and repeat as new trials.")
-    if s2 < thresholds.stability_min:
-        notes.append("S2 (halves) is below the threshold: review even though the average passes.")
+    if s2 < thresholds.stability_min <= final.stability:
+        notes.append("S2 (halves) is below the threshold even though the average passes.")
+    final_model = {
+        "s1_mean": final_metrics["s1_mean"],
+        "s1_min": final_metrics["s1_min"],
+        "s2": s2,
+        "separation_long": final_metrics["excess_long"],
+        "median_duration_days": final_metrics["durations"],
+        "days_by_decade": _days_by_decade(logged_labels(log, trials_dir, final.trial_id)),
+    }
+    return FamilyOutcome(
+        family=family,
+        score_winner=winner,
+        final=final,
+        criteria=criteria + extra,
+        notes=tuple(notes),
+        gate=gate_summary,
+        ftic_states=ftic_k,
+        pbo=pbo,
+        n_candidates=len(candidates),
+        n_effective=effective_n(
+            [labels.to_numpy() for labels in labelings], config.effective_n_cut
+        ),
+        final_model=final_model,
+    )
+
+
+def disclosure(log: TrialLog) -> dict[str, Any]:
+    """How many trials this project has registered, here and in every earlier registry."""
+    prior = list(_setup(log)["config"].get("prior_trial_logs", []))
+    here = len([t for t in log.registrations() if t != SETUP_TRIAL])
+    return {
+        "n_trials_this_log": here,
+        "prior_logs": prior,
+        "n_trials_total": here + sum(int(p["n_trials"]) for p in prior),
+        "note": "The pre-holdout data were already examined by every prior log listed here. "
+        "The holdout stays closed until a GO verdict and the user's explicit approval.",
+    }
+
+
+def build_report(
+    data: ExperimentData, log: TrialLog, trials_dir: Path, snapshot_hash: str, code_commit: str
+) -> CoreReport:
+    config = data.config
+    verify_binding(log, config, snapshot_hash, code_commit)
+    registrations, results = log.registrations(), log.results()
+    trial_ids = [t for t in registrations if t != SETUP_TRIAL]
+    pending = [t for t in trial_ids if t not in results]
+    if pending:
+        raise TrialLogError(f"trials without a result: {pending}")
+
+    def is_model(trial_id: str, model: str) -> bool:
+        return bool(registrations[trial_id]["config"].get("model") == model)
+
+    def candidates_of(family: str) -> list[Candidate]:
+        return [
+            candidate_from_record(t, registrations[t]["config"], results[t]["metrics"])
+            for t in trial_ids
+            if is_model(t, family)
+        ]
+
+    families = {family: candidates_of(family) for family in FAMILIES}
+    limitations = list(KNOWN_LIMITATIONS)
+    if config.feature_set == "tyccles":
+        limitations += list(TYCCLES_LIMITATIONS)
+    details: dict[str, object] = {
+        "columns": list(data.columns),
+        "configurations": [
+            {
+                "trial_id": c.trial_id,
+                "family": family,
+                "stability": c.stability,
+                "separation": c.separation,
+                "separation_shift": results[c.trial_id]["metrics"]["excess_short_shift"],
+                "score": c.score,
+                "passes_duration": c.passes_duration,
+            }
+            for family, candidates in families.items()
+            for c in candidates
+        ],
+        "baselines_separation": {
+            t: results[t]["metrics"]["excess_short"]
+            for t in trial_ids
+            if is_model(t, MODEL_KMEANS) or is_model(t, MODEL_INERTIA)
+        },
+        "baselines_separation_shift": {
+            t: results[t]["metrics"]["excess_short_shift"]
+            for t in trial_ids
+            if is_model(t, MODEL_KMEANS) or is_model(t, MODEL_INERTIA)
+        },
+        "limitations": limitations,
+        "disclosure": disclosure(log),
+    }
+
+    if not any(families.values()):
+        raise TrialLogError("no candidate trials in the log")
+    inertia = logged_labels(log, trials_dir, INERTIA_TRIAL)
+    outcomes: dict[str, FamilyOutcome] = {}
+    for family, candidates in families.items():
+        if candidates:
+            outcome = _family_outcome(family, candidates, data, log, trials_dir, inertia)
+            if outcome is not None:
+                outcomes[family] = outcome
+    details["families"] = {name: o.payload() for name, o in outcomes.items()}
+    if not outcomes:
+        return CoreReport(
+            verdict=Verdict.NO_GO,
+            final_trial_id=None,
+            criteria=(),
+            notes=(
+                "No configuration passes the minimum median duration "
+                "with positive stability and positive separation.",
+            ),
+            details=details,
+        )
+
+    passing = [o for o in outcomes.values() if o.verdict is Verdict.GO]
+    chosen = max(passing or list(outcomes.values()), key=lambda o: o.separation_low)
+    notes = list(chosen.notes)
+    if len(outcomes) > 1:
+        notes.append(
+            f"Family {chosen.family} decides: "
+            + ("it passes every blocking criterion" if passing else "no family passes")
+            + "; the others are reported above."
+        )
     details.update(
         {
-            "score_winner": winner.trial_id,
-            "ftic_states": ftic_k,
-            "gate": gate_summary,
-            "n_trials": len(candidates),
-            "n_effective": effective_n(
-                [labels.to_numpy() for labels in labelings], config.effective_n_cut
-            ),
-            "final_model": {
-                "s1_mean": final_metrics["s1_mean"],
-                "s1_min": final_metrics["s1_min"],
-                "s2": s2,
-                "separation_long": final_metrics["excess_long"],
-                "median_duration_days": final_metrics["durations"],
-                "days_by_decade": _days_by_decade(logged_labels(log, trials_dir, final.trial_id)),
-            },
+            "chosen_family": chosen.family,
+            "score_winner": chosen.score_winner.trial_id,
+            "ftic_states": chosen.ftic_states,
+            "gate": chosen.gate,
+            "n_trials": chosen.n_candidates,
+            "n_effective": chosen.n_effective,
+            "final_model": chosen.final_model,
         }
     )
-    all_criteria = criteria + extra
     return CoreReport(
-        verdict=decide(all_criteria),
-        final_trial_id=final.trial_id,
-        criteria=all_criteria,
+        verdict=chosen.verdict,
+        final_trial_id=chosen.final.trial_id,
+        criteria=chosen.criteria,
         notes=tuple(notes),
         details=details,
     )
