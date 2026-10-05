@@ -18,7 +18,7 @@ from termo.config import CoreConfig
 from termo.data.fred import fetch_series_csv, parse_series_csv
 from termo.data.loader import check_coverage, complete_days, load_curve, snapshot_days
 from termo.data.snapshot import snapshot_hash, write_snapshot
-from termo.dataset import ExperimentData, first_window_columns, prepare
+from termo.dataset import ExperimentData, first_window_columns, prepare, recipe_for
 from termo.experiment import (
     HoldoutResult,
     evaluate_config,
@@ -640,7 +640,13 @@ def run_final_holdout(
         raise TrialLogError("the holdout is only opened for a model with a GO verdict")
     verify_binding(log, config, snapshot_hash(snapshot_dir), code_commit)
     spec = log.registrations()[final_trial_id]["config"]
+    if spec.get("model") not in FAMILIES:
+        raise TrialLogError(f"{final_trial_id} is not a candidate model: nothing to evaluate")
+    n_states = int(spec["n_states"])
+    frozen = spec["model"] == MODEL_KMEANS_FROZEN
+    jump_penalty = None if frozen else float(spec["jump_penalty"])
     columns = registered_columns(log)
+    recipe_for(config)  # a configuration the features cannot be built from fails here
     # Every file against its hash, and coverage over the whole snapshot, by dates alone.
     days = snapshot_days(snapshot_dir, config.series, config.start)
     holdout_days = int((days >= pd.Timestamp(config.holdout_start)).sum())
@@ -654,10 +660,7 @@ def run_final_holdout(
         snapshot_dir, config.series, config.start, config.holdout_start, final_evaluation=True
     )
     result = holdout_evaluation(
-        prepare(curve, config, columns),
-        int(spec["n_states"]),
-        None if spec.get("jump_penalty") is None else float(spec["jump_penalty"]),
-        frozen=spec["model"] == MODEL_KMEANS_FROZEN,
+        prepare(curve, config, columns), n_states, jump_penalty, frozen=frozen
     )
     payload = {**asdict(result), "passed": result.passed, "final_trial_id": final_trial_id}
     log.record_holdout_result(payload)

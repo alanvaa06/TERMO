@@ -79,6 +79,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="report directory (default: reports)",
     )
     args = parser.parse_args(argv)
+    if (args.trials_dir == TRIALS_DIR) != (args.reports_dir == REPORTS_DIR):
+        # one experiment's report must never land in another experiment's directory
+        parser.error("--trials-dir and --reports-dir go together: give both or neither")
 
     config = load_config(args.config)
     log = TrialLog(args.trials_dir / TRIALS_FILE)

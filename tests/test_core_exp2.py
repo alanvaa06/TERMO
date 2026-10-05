@@ -400,3 +400,14 @@ def test_the_report_answers_h1(finished: Path) -> None:
     passes = details["baselines_passes_duration"]
     assert set(passes) == {"kmeans_k2", "kmeans_k3"}
     assert all(isinstance(value, bool) for value in passes.values())
+
+
+def test_a_final_model_that_cannot_be_evaluated_does_not_burn_the_holdout(
+    finished: Path, tmp_path: Path, snapshot_dir: Path, log: TrialLog, exp2_config: CoreConfig
+) -> None:
+    private = TrialLog(tmp_path / "trials.jsonl")
+    private.path.write_text(log.path.read_text(encoding="utf-8"), encoding="utf-8")
+    private.record_report(report_payload(CoreReport(Verdict.GO, INERTIA_TRIAL, criteria=())))
+    with pytest.raises(TrialLogError, match="not a candidate model"):
+        run_final_holdout(exp2_config, snapshot_dir, private, tmp_path / "reports", COMMIT)
+    assert not private.holdout_opened()

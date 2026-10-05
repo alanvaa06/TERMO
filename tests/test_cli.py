@@ -241,3 +241,11 @@ def test_trials_and_reports_directories_are_arguments(
     out = capsys.readouterr().out
     assert out.isascii() and "reports/exp2/go_no_go.md" in out
     assert (tmp_path / "reports" / "exp2" / "go_no_go.json").exists()
+
+
+def test_trials_and_reports_directories_go_together(capsys: pytest.CaptureFixture[str]) -> None:
+    """Forgetting one would write an experiment's report over another experiment's."""
+    for lonely in (["--trials-dir", "trials/exp2"], ["--reports-dir", "reports/exp2"]):
+        with pytest.raises(SystemExit):
+            main(["report", "--config", str(REPO_CONFIG), "--snapshot", "x", *lonely])
+    assert "go together" in capsys.readouterr().err

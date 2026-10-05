@@ -30,3 +30,4 @@ data/cache/
 # Reproducibility artifacts are versioned on purpose
 !data/snapshots/**/*.csv
 !trials/labels/*.csv
+!trials/**/labels/*.csv
