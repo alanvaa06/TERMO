@@ -105,7 +105,10 @@ class FittedPipeline:
 
     def level_change(self, curve: pd.DataFrame) -> pd.Series:
         """Raw smoothed 63-day change of the level after the burn-in, for the inertia baseline."""
-        return self.recipe.level_change(curve).iloc[self.burn_in :]
+        change = self.recipe.level_change(curve).iloc[self.burn_in :]
+        if not np.isfinite(change.to_numpy()).all():
+            raise ValueError("non-finite level change after the burn-in")
+        return change
 
     def transform(self, curve: pd.DataFrame) -> pd.DataFrame:
         selected = self.raw(curve)[list(self.columns)]

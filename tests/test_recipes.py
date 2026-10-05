@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from conftest import TENORS
 from termo.config import CoreConfig
@@ -76,3 +77,11 @@ def test_refits_and_halves_take_the_recipe(curve: pd.DataFrame, config: CoreConf
     pd.testing.assert_series_equal(refits[0].level_change, expected)
     value = halves_ari(curve, recipe.names, 80, kmeans_fitter(2), recipe=recipe)
     assert -0.5 <= value <= 1.0
+
+
+def test_a_level_change_that_is_not_ready_after_the_burn_in_is_refused(curve: pd.DataFrame) -> None:
+    """A NaN would silently count as 'down' in the inertia baseline."""
+    recipe = MeanRecipe()
+    pipeline = fit_pipeline(curve, curve.index[999], recipe.names, 20, recipe=recipe)
+    with pytest.raises(ValueError, match="level change"):
+        pipeline.level_change(curve)  # the smoothed 63-day change needs 73 rows
