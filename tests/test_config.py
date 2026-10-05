@@ -98,3 +98,66 @@ def test_experiment_2_differs_from_spec_1_only_where_the_spec_says() -> None:
         prior_trial_logs=base.prior_trial_logs,
     )
     assert aligned == base
+
+
+DESC_CONFIG = Path(__file__).resolve().parents[1] / "configs" / "desc.yaml"
+
+
+def test_loads_the_descriptive_configuration() -> None:
+    config = load_config(DESC_CONFIG)
+    desc = config.descriptive
+    assert desc is not None
+    assert config.k_values == (3,) and config.jump_penalties == (3.0,)
+    assert config.jump_penalty_per_feature is True and config.feature_set == "tyccles"
+    assert config.frozen_train_end == date(2014, 12, 31)
+    assert config.prior_trial_logs == ("trials/trials.jsonl", "trials/exp2/trials.jsonl")
+    assert desc.phase_names == ("rally de la parte corta", "rally de la parte larga", "venta")
+    assert (desc.sell_phase, desc.short_led_phase, desc.long_led_phase) == (2, 0, 1)
+    assert (desc.slope_long, desc.slope_short, desc.level_series) == ("DGS10", "DGS2", "DGS10")
+    assert desc.change_days == 63 and desc.min_days_evaluable == 40
+    assert desc.coherence_share_min == 0.6 and desc.map_ari_min == 0.6
+    assert desc.fidelity_min == 0.8 and desc.low_confidence_below == 0.6
+    assert desc.surrogate.n_estimators == 300 and desc.surrogate.max_depth == 4
+    assert desc.surrogate.learning_rate == 0.05 and desc.surrogate.seed == 0
+    assert [name for name, _ in desc.blocks] == [
+        "nivel corto",
+        "nivel medio",
+        "nivel largo",
+        "pendientes",
+        "curvatura",
+        "volatilidad",
+    ]
+    assert dict(desc.blocks)["nivel corto"] == ("d1", "d2", "d3")
+    assert dict(desc.blocks)["volatilidad"] == (
+        "vol1",
+        "vol2",
+        "vol3",
+        "vol5",
+        "vol7",
+        "vol10",
+        "vol30",
+    )
+
+
+def test_descriptive_configuration_is_experiment_2_with_one_model() -> None:
+    exp2, config = load_config(EXP2_CONFIG), load_config(DESC_CONFIG)
+    aligned = replace(
+        config,
+        k_values=exp2.k_values,
+        jump_penalties=exp2.jump_penalties,
+        frozen_train_end=exp2.frozen_train_end,
+        prior_trial_logs=exp2.prior_trial_logs,
+        descriptive=None,
+    )
+    assert aligned == exp2
+
+
+def test_descriptive_configuration_needs_one_model_and_a_name_per_phase() -> None:
+    config = load_config(DESC_CONFIG)
+    with pytest.raises(ValueError, match="one K and one jump penalty"):
+        replace(config, k_values=(2, 3))
+    assert config.descriptive is not None
+    with pytest.raises(ValueError, match="one name per phase"):
+        replace(config, descriptive=replace(config.descriptive, phase_names=("a", "b")))
+    with pytest.raises(ValueError, match="frozen_train_end"):
+        replace(config, frozen_train_end=None)

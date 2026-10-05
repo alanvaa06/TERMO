@@ -11,7 +11,15 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from termo.config import BootstrapConfig, CoreConfig, FticConfig, Thresholds, TycclesConfig
+from termo.config import (
+    BootstrapConfig,
+    CoreConfig,
+    DescriptiveConfig,
+    FticConfig,
+    SurrogateConfig,
+    Thresholds,
+    TycclesConfig,
+)
 
 if TYPE_CHECKING:
     from termo.dataset import ExperimentData
@@ -153,3 +161,49 @@ def tyccles_data(pre_holdout: pd.DataFrame, tyccles_config: CoreConfig) -> Exper
     from termo.dataset import prepare, recipe_for
 
     return prepare(pre_holdout, tyccles_config, recipe_for(tyccles_config).names)
+
+
+def make_desc_config() -> CoreConfig:
+    """Spec 3 on the synthetic curve: one 3-phase model, a small surrogate, a frozen fit in 1996."""
+    return replace(
+        make_tyccles_config(),
+        k_values=(3,),
+        jump_penalties=(0.5,),
+        frozen_train_end=date(1996, 6, 28),
+        descriptive=DescriptiveConfig(
+            phase_names=("rally de la parte corta", "rally de la parte larga", "venta"),
+            sell_phase=2,
+            short_led_phase=0,
+            long_led_phase=1,
+            level_series="DGS10",
+            slope_long="DGS10",
+            slope_short="DGS2",
+            change_days=63,
+            coherence_share_min=0.6,
+            min_days_evaluable=40,
+            map_ari_min=0.6,
+            fidelity_min=0.8,
+            low_confidence_below=0.6,
+            surrogate=SurrogateConfig(
+                n_estimators=20,
+                max_depth=3,
+                learning_rate=0.1,
+                subsample=0.8,
+                colsample_bytree=0.8,
+                seed=0,
+            ),
+            blocks=(
+                ("nivel corto", ("d1", "d2", "d3")),
+                ("nivel medio", ("d5", "d7")),
+                ("nivel largo", ("d10", "d30")),
+                ("pendientes", ("s12m5s", "s3s10", "s10s30")),
+                ("curvatura", ("c5",)),
+                ("volatilidad", ("vol1", "vol2", "vol3", "vol5", "vol7", "vol10", "vol30")),
+            ),
+        ),
+    )
+
+
+@pytest.fixture(scope="session")
+def desc_config() -> CoreConfig:
+    return make_desc_config()

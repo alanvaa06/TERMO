@@ -1,0 +1,79 @@
+# TERMO spec 3 (descriptive tool). Every value here is pre-registered. The model, its
+# penalty and the phase names were chosen LOOKING at pre-holdout data (experiment 2);
+# only the holdout is clean evidence. Everything not under "spec 3" equals configs/exp2.yaml.
+series: [DGS1, DGS2, DGS3, DGS5, DGS7, DGS10, DGS30]
+start: 1977-02-15
+holdout_start: 2024-10-01
+first_train_end: 1987-12-31
+refit_weeks: 26
+
+feature_set: tyccles
+tyccles:
+  change_horizons_days: [21, 42, 63, 84, 126, 189]
+  rank_windows_days: [126, 252]
+  vol_window_days: 21
+  vol_rank_window_days: 252
+burn_in_days: 504
+apply_collinearity_rule: false
+jump_penalty_per_feature: true
+
+# --- spec 3 ---
+frozen_train_end: 2014-12-31  # D5 on pre-holdout: a model fitted once through here
+prior_trial_logs: [trials/trials.jsonl, trials/exp2/trials.jsonl]  # 29 + 33 trials, both no-go
+grid:
+  k: [3]             # the trial jm_k3_lam3 of experiment 2
+  jump_penalty: [3]  # per feature: lambda = 3 * 139 = 417
+descriptive:
+  phase_names: [rally de la parte corta, rally de la parte larga, venta]
+  sell_phase: 2
+  short_led_phase: 0
+  long_led_phase: 1
+  level_series: DGS10
+  slope_long: DGS10
+  slope_short: DGS2
+  change_days: 63
+  coherence_share_min: 0.6
+  min_days_evaluable: 40
+  map_ari_min: 0.6
+  fidelity_min: 0.8
+  low_confidence_below: 0.6
+  surrogate:
+    n_estimators: 300
+    max_depth: 4
+    learning_rate: 0.05
+    subsample: 0.8
+    colsample_bytree: 0.8
+    seed: 0
+  blocks:
+    nivel corto: [d1, d2, d3]
+    nivel medio: [d5, d7]
+    nivel largo: [d10, d30]
+    pendientes: [s12m5s, s3s10, s10s30]
+    curvatura: [c5]
+    volatilidad: [vol1, vol2, vol3, vol5, vol7, vol10, vol30]
+# --- end spec 3 ---
+
+horizons_days:
+  short: 20
+  long: 65
+
+thresholds:
+  stability_min: 0.6
+  independence_p_max: 0.01
+  min_median_duration_days: 20
+  pbo_max: 0.05
+  collinearity_max: 0.8
+
+bootstrap:
+  block_weeks: 26
+  n_resamples: 2000
+  seed: 0
+
+ftic:
+  k0: 3
+  mean_phase_days: 40
+  saturated_k: 6
+  max_jump_fraction: 0.4
+
+pbo_blocks: 16
+effective_n_cut: 0.2

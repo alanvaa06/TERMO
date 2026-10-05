@@ -45,6 +45,37 @@ class TycclesConfig:
 
 
 @dataclass(frozen=True)
+class SurrogateConfig:
+    n_estimators: int
+    max_depth: int
+    learning_rate: float
+    subsample: float
+    colsample_bytree: float
+    seed: int
+
+
+@dataclass(frozen=True)
+class DescriptiveConfig:
+    """Spec 3: one fixed model read as a description, never as a forecast."""
+
+    phase_names: tuple[str, ...]
+    sell_phase: int
+    short_led_phase: int  # the rally led by the short end: the curve steepens
+    long_led_phase: int  # the rally led by the long end: the curve flattens
+    level_series: str
+    slope_long: str
+    slope_short: str
+    change_days: int  # contemporaneous changes are taken over the PAST this many days
+    coherence_share_min: float
+    min_days_evaluable: int
+    map_ari_min: float
+    fidelity_min: float
+    low_confidence_below: float
+    surrogate: SurrogateConfig
+    blocks: tuple[tuple[str, tuple[str, ...]], ...]  # (block, first tokens of its variables)
+
+
+@dataclass(frozen=True)
 class CoreConfig:
     series: tuple[str, ...]
     start: date
@@ -67,6 +98,7 @@ class CoreConfig:
     jump_penalty_per_feature: bool = False  # lambda = value * number of features
     frozen_train_end: date | None = None  # K-means fitted once through this date, never refitted
     prior_trial_logs: tuple[str, ...] = ()  # earlier registries the report must count
+    descriptive: DescriptiveConfig | None = None
 
     def __post_init__(self) -> None:
         if not self.start < self.first_train_end < self.holdout_start:
@@ -89,11 +121,23 @@ class CoreConfig:
             raise ValueError(
                 "frozen_train_end must satisfy start < frozen_train_end < holdout_start"
             )
+        if self.descriptive is not None:
+            desc = self.descriptive
+            if len(self.k_values) != 1 or len(self.jump_penalties) != 1:
+                raise ValueError("the descriptive tool is one model: one K and one jump penalty")
+            if len(desc.phase_names) != self.k_values[0]:
+                raise ValueError("the descriptive tool needs one name per phase")
+            phases = {desc.sell_phase, desc.short_led_phase, desc.long_led_phase}
+            if len(phases) != 3 or not phases <= set(range(self.k_values[0])):
+                raise ValueError("sell, short-led and long-led phases must be three valid phases")
+            if self.frozen_train_end is None:
+                raise ValueError("the descriptive tool needs frozen_train_end for criterion D5")
 
 
 def load_config(path: Path) -> CoreConfig:
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
     tyccles = raw.get("tyccles")
+    desc = raw.get("descriptive")
     return CoreConfig(
         series=tuple(raw["series"]),
         start=raw["start"],
@@ -123,4 +167,33 @@ def load_config(path: Path) -> CoreConfig:
         jump_penalty_per_feature=bool(raw.get("jump_penalty_per_feature", False)),
         frozen_train_end=raw.get("frozen_train_end"),
         prior_trial_logs=tuple(str(p) for p in raw.get("prior_trial_logs", ())),
+        descriptive=None
+        if desc is None
+        else DescriptiveConfig(
+            phase_names=tuple(str(name) for name in desc["phase_names"]),
+            sell_phase=int(desc["sell_phase"]),
+            short_led_phase=int(desc["short_led_phase"]),
+            long_led_phase=int(desc["long_led_phase"]),
+            level_series=str(desc["level_series"]),
+            slope_long=str(desc["slope_long"]),
+            slope_short=str(desc["slope_short"]),
+            change_days=int(desc["change_days"]),
+            coherence_share_min=float(desc["coherence_share_min"]),
+            min_days_evaluable=int(desc["min_days_evaluable"]),
+            map_ari_min=float(desc["map_ari_min"]),
+            fidelity_min=float(desc["fidelity_min"]),
+            low_confidence_below=float(desc["low_confidence_below"]),
+            surrogate=SurrogateConfig(
+                n_estimators=int(desc["surrogate"]["n_estimators"]),
+                max_depth=int(desc["surrogate"]["max_depth"]),
+                learning_rate=float(desc["surrogate"]["learning_rate"]),
+                subsample=float(desc["surrogate"]["subsample"]),
+                colsample_bytree=float(desc["surrogate"]["colsample_bytree"]),
+                seed=int(desc["surrogate"]["seed"]),
+            ),
+            blocks=tuple(
+                (str(name), tuple(str(token) for token in tokens))
+                for name, tokens in desc["blocks"].items()
+            ),
+        ),
     )
