@@ -1,0 +1,152 @@
+{
+  "by_phase": [
+    {
+      "days": 1852,
+      "direction_share": 0.8234341252699784,
+      "episodes": 21,
+      "evaluable": true,
+      "median_duration_days": 74.0,
+      "name": "rally fuerte",
+      "phase": 0,
+      "recall": 0.8763498920086393
+    },
+    {
+      "days": 3019,
+      "direction_share": 0.8009274594236502,
+      "episodes": 48,
+      "evaluable": true,
+      "median_duration_days": 54.0,
+      "name": "rally moderado",
+      "phase": 1,
+      "recall": 0.7230871149387215
+    },
+    {
+      "days": 4323,
+      "direction_share": 0.8001387925052047,
+      "episodes": 53,
+      "evaluable": true,
+      "median_duration_days": 82.0,
+      "name": "venta",
+      "phase": 2,
+      "recall": 0.8827203331020125
+    }
+  ],
+  "calibration": {
+    "brier": {
+      "0": 0.06742820143699646,
+      "1": 0.11264070868492126,
+      "2": 0.10613483935594559
+    },
+    "recall_by_phase": {
+      "0": {
+        "days": 1852,
+        "recall": 0.8763498920086393
+      },
+      "1": {
+        "days": 3019,
+        "recall": 0.7230871149387215
+      },
+      "2": {
+        "days": 4323,
+        "recall": 0.8827203331020125
+      }
+    },
+    "reliability": [
+      {
+        "bin": "0.0-0.2",
+        "days": 0,
+        "mean_probability": null,
+        "share_correct": null
+      },
+      {
+        "bin": "0.2-0.4",
+        "days": 4,
+        "mean_probability": 0.3823241889476776,
+        "share_correct": 0.5
+      },
+      {
+        "bin": "0.4-0.6",
+        "days": 320,
+        "mean_probability": 0.5394159555435181,
+        "share_correct": 0.45625
+      },
+      {
+        "bin": "0.6-0.8",
+        "days": 563,
+        "mean_probability": 0.7040098905563354,
+        "share_correct": 0.566607460035524
+      },
+      {
+        "bin": "0.8-1.0",
+        "days": 8307,
+        "mean_probability": 0.9818730354309082,
+        "share_correct": 0.8613217768147345
+      }
+    ]
+  },
+  "checks": [
+    {
+      "name": "D1_persistence",
+      "passed": true,
+      "requirement": ">= 20 days",
+      "value": 54.0
+    },
+    {
+      "name": "D2_sell_coherence",
+      "passed": true,
+      "requirement": ">= 0.6",
+      "value": 0.8001387925052047
+    },
+    {
+      "name": "D3_rally_coherence",
+      "passed": true,
+      "requirement": ">= 0.6",
+      "value": 0.8009274594236502
+    },
+    {
+      "name": "D5_map_stable",
+      "passed": true,
+      "requirement": ">= 0.6",
+      "value": 0.971206445475917
+    },
+    {
+      "name": "D6_fidelity",
+      "passed": true,
+      "requirement": ">= 0.8",
+      "value": 0.8273857800164578
+    }
+  ],
+  "days": 9194,
+  "disclosure": {
+    "n_trials_this_log": 1,
+    "n_trials_total": 64,
+    "prior_logs": [
+      {
+        "n_trials": 29,
+        "path": "trials/trials.jsonl",
+        "verdict": "no-go"
+      },
+      {
+        "n_trials": 33,
+        "path": "trials/exp2/trials.jsonl",
+        "verdict": "no-go"
+      },
+      {
+        "n_trials": 1,
+        "path": "trials/desc/trials.jsonl",
+        "verdict": "no-apto"
+      }
+    ]
+  },
+  "final_trial_id": "desc_k3",
+  "limits": [
+    "K, the penalty and the phase names were chosen looking at pre-holdout data.",
+    "D2-D3 are partly true by construction: the phases are built from ranks of these changes.",
+    "The fidelity threshold is a judgement, not a calibrated value.",
+    "SHAP explains the surrogate, not the market and not the jump model.",
+    "Nothing here measures the ability to anticipate; that question is closed with NO-GO.",
+    "Phase names describe direction and intensity only; no claim about the shape of the curve is made or tested."
+  ],
+  "stage": "diagnostic",
+  "verdict": "apto"
+}
