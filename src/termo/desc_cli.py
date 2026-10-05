@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 from collections.abc import Sequence
 from datetime import date
 from pathlib import Path
@@ -44,8 +45,18 @@ from termo.reading import (
 )
 from termo.validation.trials import TrialLog, TrialLogError
 
-TRIALS_DIR = Path("trials") / "desc"
-REPORTS_DIR = Path("reports") / "desc"
+REGISTRY = "desc"  # default registry name: trials/<registry> and reports/<registry>
+REGISTRY_PATTERN = r"^[a-z0-9_]+$"
+
+
+def trials_dir(registry: str) -> Path:
+    return Path("trials") / registry
+
+
+def reports_dir(registry: str) -> Path:
+    return Path("reports") / registry
+
+
 TRIALS_FILE = "trials.jsonl"
 APPROVAL_FLAG = "--i-approve-opening-the-holdout"
 
@@ -58,6 +69,7 @@ def iso_date(text: str) -> date:
 
 
 def _read(args: argparse.Namespace, log: TrialLog, data_hash: str, commit: str) -> Path:
+    trials, reports = trials_dir(args.registry), reports_dir(args.registry)
     config = load_config(args.config)
     # the reading binds the data, not the code: later code must still read this log
     verify_data_binding(log, config, data_hash)
@@ -94,10 +106,10 @@ def _read(args: argparse.Namespace, log: TrialLog, data_hash: str, commit: str) 
             "no reading for that date: the holdout " + (LOST_HOLDOUT if lost else "has no result")
         )
     files = log.results()[trial]["metrics"]["files"]
-    analysis = load_analysis(TRIALS_DIR / PRE_HOLDOUT_DIR, files)
+    analysis = load_analysis(trials / PRE_HOLDOUT_DIR, files)
     if in_holdout and holdout is not None:
         # the holdout outputs, with the labels before them so an episode keeps its start
-        analysis = span_periods(analysis, load_analysis(TRIALS_DIR / HOLDOUT_DIR, holdout["files"]))
+        analysis = span_periods(analysis, load_analysis(trials / HOLDOUT_DIR, holdout["files"]))
     generated_with = {
         "code_commit": commit,
         "registered_code_commit": str(log.registrations()[SETUP_TRIAL]["code_commit"]),
@@ -107,7 +119,7 @@ def _read(args: argparse.Namespace, log: TrialLog, data_hash: str, commit: str) 
         reading = build_reading(analysis, day, config, validation, generated_with)
     except KeyError as error:
         raise TrialLogError(f"no reading for that date: {error.args[0]}") from error
-    out = REPORTS_DIR / "readings"
+    out = reports / "readings"
     write_reading(reading, out)
     return out / f"{reading['date']}.md"
 
@@ -121,6 +133,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--snapshot", type=Path, required=True, help="snapshot directory")
     parser.add_argument("--date", type=iso_date, help="reading date, YYYY-MM-DD (stage read)")
     parser.add_argument(
+        "--registry",
+        default=REGISTRY,
+        help="registry name: trials/<name> and reports/<name> (default: desc)",
+    )
+    parser.add_argument(
         APPROVAL_FLAG,
         dest="approved",
         action="store_true",
@@ -132,8 +149,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.stage == "holdout" and not args.approved:
         parser.error(f"the holdout runs once and cannot be repeated: pass {APPROVAL_FLAG}")
 
+    if not re.fullmatch(REGISTRY_PATTERN, args.registry):
+        parser.error("--registry must be a plain name: lowercase letters, digits, underscore")
+    trials, reports = trials_dir(args.registry), reports_dir(args.registry)
     config = load_config(args.config)
-    log = TrialLog(TRIALS_DIR / TRIALS_FILE)
+    log = TrialLog(trials / TRIALS_FILE)
     data_hash, commit = snapshot_hash(args.snapshot), code_identity()
 
     if args.stage == "read":
@@ -141,8 +161,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"[ok] reading -> {path.as_posix()}")
         return 0
     if args.stage == "holdout":
-        result = holdout_desc(config, args.snapshot, log, TRIALS_DIR, REPORTS_DIR, commit)
-        print(f"[ok] holdout verdict: {result} -> {REPORTS_DIR.as_posix()}/holdout.md")
+        result = holdout_desc(config, args.snapshot, log, trials, reports, commit)
+        print(f"[ok] holdout verdict: {result} -> {reports.as_posix()}/holdout.md")
         return 0
 
     curve = load_curve(args.snapshot, config.series, config.start, config.holdout_start)
@@ -153,11 +173,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     verify_binding(log, config, data_hash, commit)  # before any computation
     data = prepare(curve, config, registered_columns(log))
     if args.stage == "run":
-        run_desc(data, log, TRIALS_DIR, data_hash, commit)
+        run_desc(data, log, trials, data_hash, commit)
         print("[ok] the registered trial has a result")
     else:
-        result = report_desc(data, log, TRIALS_DIR, REPORTS_DIR, data_hash, commit)
-        print(f"[ok] diagnostic verdict: {result} -> {REPORTS_DIR.as_posix()}/diagnostic.md")
+        result = report_desc(data, log, trials, reports, data_hash, commit)
+        print(f"[ok] diagnostic verdict: {result} -> {reports.as_posix()}/diagnostic.md")
     return 0
 
 

@@ -219,7 +219,6 @@ def test_a_registration_that_predates_an_optional_key_reads_it_as_its_default(
     assert fingerprint["descriptive"]["holdout_already_seen"] is False
     del fingerprint["descriptive"]["holdout_already_seen"]
     del fingerprint["descriptive"]["holdout_seen_by"]
-    del fingerprint["prior_trial_logs"]  # top-level optional key, at its default
     older = TrialLog(tmp_path / "trials.jsonl")
     older.register(
         SETUP_TRIAL,
@@ -234,6 +233,32 @@ def test_a_registration_that_predates_an_optional_key_reads_it_as_its_default(
         verify_binding(older, seen, "hash", COMMIT)
     with pytest.raises(TrialLogError, match="configuration"):
         verify_binding(older, replace(desc, prior_trial_logs=("a.jsonl",)), "hash", COMMIT)
+    # a key that is NOT on the explicit list is never filled in, even with a default
+    unlisted = dict(fingerprint)
+    del unlisted["prior_trial_logs"]
+    strict = TrialLog(tmp_path / "unlisted.jsonl")
+    strict.register(
+        SETUP_TRIAL,
+        "setup",
+        {"config": unlisted, "environment": environment_fingerprint()},
+        "hash",
+        COMMIT,
+    )
+    with pytest.raises(TrialLogError, match="configuration"):
+        verify_binding(strict, desc, "hash", COMMIT)
+    # a key the registration has but the code no longer knows is a difference too
+    extra = dict(fingerprint)
+    extra["descriptive"] = {**fingerprint["descriptive"], "removed_later": 42}
+    stale = TrialLog(tmp_path / "stale.jsonl")
+    stale.register(
+        SETUP_TRIAL,
+        "setup",
+        {"config": extra, "environment": environment_fingerprint()},
+        "hash",
+        COMMIT,
+    )
+    with pytest.raises(TrialLogError, match="configuration"):
+        verify_binding(stale, desc, "hash", COMMIT)
     # a required key the registration lacks is a difference, never filled in
     del fingerprint["refit_weeks"]
     lacking = TrialLog(tmp_path / "lacking.jsonl")

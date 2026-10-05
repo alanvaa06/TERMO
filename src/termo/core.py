@@ -46,7 +46,7 @@ from termo.selection import (
     simpler_alternative,
 )
 from termo.validation.pbo import effective_n
-from termo.validation.trials import TrialLog, TrialLogError, TrialStatus
+from termo.validation.trials import RecordKind, TrialLog, TrialLogError, TrialStatus
 from termo.validation.walkforward import inertia_labels
 
 SETUP_TRIAL = "setup"
@@ -119,22 +119,36 @@ def config_fingerprint(config: CoreConfig) -> dict[str, Any]:
     return fingerprint
 
 
-def _with_later_defaults(registered: Any, current: Any) -> Any:
-    """A registered fingerprint read with the optional keys later code added.
+# Keys that later code added and an earlier registration may lack. Every key here must be
+# one whose default reproduces the behaviour the registration had: never a key that
+# changes results. Anything else that is missing, or any key the current code does not
+# know, is a difference.
+LATER_OPTIONAL_KEYS = frozenset(
+    {"descriptive", "descriptive.holdout_already_seen", "descriptive.holdout_seen_by"}
+)
 
-    A key the registration predates is read as its default, so an earlier registry
-    still binds to its own configuration; a required key it lacks stays missing.
+
+def _with_later_defaults(registered: Any, current: Any, prefix: str = "") -> Any:
+    """A registered fingerprint read with the keys later code added, by explicit list.
+
+    A listed key the registration predates is read as its default; a required key it
+    lacks stays missing, and a key it has that the code no longer knows is kept, so
+    both show up as differences.
     """
     if not (is_dataclass(current) and isinstance(registered, dict)):
         return registered
     filled: dict[str, Any] = {}
+    known = {field.name for field in fields(current)}
     for field in fields(current):
+        dotted = f"{prefix}{field.name}"
         if field.name in registered:
             filled[field.name] = _with_later_defaults(
-                registered[field.name], getattr(current, field.name)
+                registered[field.name], getattr(current, field.name), f"{dotted}."
             )
-        elif field.default is not MISSING:
+        elif dotted in LATER_OPTIONAL_KEYS and field.default is not MISSING:
             filled[field.name] = _plain(field.default)
+    for key in registered.keys() - known:
+        filled[key] = registered[key]
     return filled
 
 
@@ -172,12 +186,14 @@ def prior_log_summary(config: CoreConfig) -> list[dict[str, Any]]:
         if not log.path.exists():
             raise TrialLogError(f"prior trial log not found: {path}")
         trials = [t for t in log.registrations() if t != SETUP_TRIAL]
-        report = log.last_report()
+        # the verdict that counts is the last one: a holdout result over an earlier report
+        holdouts = [r for r in log.records() if r["kind"] == RecordKind.HOLDOUT_RESULT.value]
+        last: dict[str, Any] | None = holdouts[-1] if holdouts else log.last_report()
         summary.append(
             {
                 "path": path,
                 "n_trials": len(trials),
-                "verdict": None if report is None else report["verdict"],
+                "verdict": None if last is None else last["verdict"],
             }
         )
     return summary

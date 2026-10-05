@@ -569,12 +569,13 @@ def test_the_reregistration_recomputes_the_same_files_without_d4(
     setup = second.registrations()[SETUP_TRIAL]["config"]
     assert setup["config"]["descriptive"]["holdout_already_seen"] is True
     assert setup["config"]["descriptive"]["short_led_phase"] is None
-    first_report = log.last_report()
-    assert first_report is not None
+    # the first registry's LAST verdict counts: its holdout result when it has one
+    last = holdout_result(log) or log.last_report()
+    assert last is not None
     assert setup["prior_trial_logs"][1] == {
         "path": log.path.as_posix(),
         "n_trials": 1,
-        "verdict": first_report["verdict"],
+        "verdict": last["verdict"],
     }
     # same model, same data: the daily outputs are byte-identical to the first registry
     files = second.results()["desc_k3"]["metrics"]["files"]

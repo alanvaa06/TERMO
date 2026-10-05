@@ -12,7 +12,7 @@ import pytest
 from conftest import fake_fred
 from termo.config import load_config
 from termo.core import environment_fingerprint, take_snapshot
-from termo.desc_cli import LOST_HOLDOUT, REPORTS_DIR, TRIALS_DIR, TRIALS_FILE, main
+from termo.desc_cli import LOST_HOLDOUT, REGISTRY, TRIALS_FILE, main, reports_dir, trials_dir
 from termo.descriptive.criteria import APTO, NO_APTO
 from termo.descriptive.stages import (
     HOLDOUT_DIR,
@@ -23,6 +23,9 @@ from termo.descriptive.stages import (
 )
 from termo.validation.trials import TrialLog, TrialLogError
 from test_cli import EXP2_SMALL_CONFIG
+
+TRIALS_DIR = trials_dir(REGISTRY)
+REPORTS_DIR = reports_dir(REGISTRY)
 
 DESC_SMALL_CONFIG = (
     EXP2_SMALL_CONFIG.replace(
@@ -318,3 +321,22 @@ def test_a_holdout_reading_counts_the_episode_from_before_the_holdout(private: P
     assert reading["episode_start"] == episode.date().isoformat()
     assert reading["days_in_phase"] == len(whole.loc[episode:])
     assert reading["days_in_phase"] > 1  # the holdout alone would say 1
+
+
+def test_a_registry_name_selects_its_own_directories(
+    here: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """desc2 lives in trials/desc2 and reports/desc2; a bad name is refused before anything."""
+    private = tmp_path / "ws"
+    shutil.copytree(here, private)
+    monkeypatch.chdir(private)
+    stage = ["--config", "desc.yaml", "--snapshot", "snapshot"]
+    with pytest.raises(SystemExit):
+        main(["register", *stage, "--registry", "../desc"])
+    assert not (private / "trials" / "desc2").exists()
+    assert main(["register", *stage, "--registry", "desc2"]) == 0
+    assert (private / "trials" / "desc2" / TRIALS_FILE).exists()
+    # the default registry is untouched by the new one
+    assert (private / "trials" / "desc" / TRIALS_FILE).read_text(encoding="utf-8") == (
+        here / "trials" / "desc" / TRIALS_FILE
+    ).read_text(encoding="utf-8")
