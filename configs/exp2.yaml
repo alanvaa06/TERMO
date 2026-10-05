@@ -1,0 +1,51 @@
+# TERMO spec 2 (experiment 2: TYCCLES data recipe). Every value here is pre-registered:
+# changing one after a run is a new trial, not an edit. Everything not listed under
+# "spec 2" is identical to configs/core.yaml.
+series: [DGS1, DGS2, DGS3, DGS5, DGS7, DGS10, DGS30]
+start: 1977-02-15
+holdout_start: 2024-10-01
+first_train_end: 1987-12-31
+refit_weeks: 26
+
+# --- spec 2 ---
+feature_set: tyccles
+tyccles:
+  change_horizons_days: [21, 42, 63, 84, 126, 189]
+  rank_windows_days: [126, 252]
+  vol_window_days: 21
+  vol_rank_window_days: 252
+burn_in_days: 504             # longest smoothed change (189 + 47) plus the 252-day rank
+apply_collinearity_rule: false  # HSBC fed all 102 correlated inputs; we feed all 139
+jump_penalty_per_feature: true  # lambda = value * 139; with 10 features this is spec 1's grid
+frozen_train_end: 1997-12-31  # K-means fitted once through here, read 1998-01 -> 2024-09
+prior_trial_logs: [trials/trials.jsonl]  # counted in the report: 30 trials, verdict no-go
+# --- end spec 2 ---
+
+grid:
+  k: [2, 3, 4, 5]
+  jump_penalty: [0.5, 1.2, 3, 8, 20, 50]
+
+horizons_days:
+  short: 20
+  long: 65
+
+thresholds:
+  stability_min: 0.6
+  independence_p_max: 0.01
+  min_median_duration_days: 20
+  pbo_max: 0.05
+  collinearity_max: 0.8
+
+bootstrap:
+  block_weeks: 26
+  n_resamples: 2000
+  seed: 0
+
+ftic:
+  k0: 3
+  mean_phase_days: 40
+  saturated_k: 6
+  max_jump_fraction: 0.4
+
+pbo_blocks: 16
+effective_n_cut: 0.2

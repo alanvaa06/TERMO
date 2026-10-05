@@ -33,6 +33,17 @@ class FticConfig:
     max_jump_fraction: float
 
 
+FEATURE_SETS = ("pca", "tyccles")
+
+
+@dataclass(frozen=True)
+class TycclesConfig:
+    change_horizons_days: tuple[int, ...]
+    rank_windows_days: tuple[int, ...]
+    vol_window_days: int
+    vol_rank_window_days: int
+
+
 @dataclass(frozen=True)
 class CoreConfig:
     series: tuple[str, ...]
@@ -50,6 +61,12 @@ class CoreConfig:
     thresholds: Thresholds
     bootstrap: BootstrapConfig
     ftic: FticConfig
+    feature_set: str = "pca"
+    tyccles: TycclesConfig | None = None
+    apply_collinearity_rule: bool = True
+    jump_penalty_per_feature: bool = False  # lambda = value * number of features
+    frozen_train_end: date | None = None  # K-means fitted once through this date, never refitted
+    prior_trial_logs: tuple[str, ...] = ()  # earlier registries the report must count
 
     def __post_init__(self) -> None:
         if not self.start < self.first_train_end < self.holdout_start:
@@ -62,10 +79,21 @@ class CoreConfig:
             raise ValueError("pbo_blocks must be an even number >= 2")
         if self.refit_weeks < 1 or self.burn_in_days < 0:
             raise ValueError("refit_weeks must be >= 1 and burn_in_days >= 0")
+        if self.feature_set not in FEATURE_SETS:
+            raise ValueError(f"feature_set must be one of {FEATURE_SETS}")
+        if (self.feature_set == "tyccles") != (self.tyccles is not None):
+            raise ValueError("the tyccles feature set needs its parameters, and only that set")
+        if self.frozen_train_end is not None and not (
+            self.start < self.frozen_train_end < self.holdout_start
+        ):
+            raise ValueError(
+                "frozen_train_end must satisfy start < frozen_train_end < holdout_start"
+            )
 
 
 def load_config(path: Path) -> CoreConfig:
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    tyccles = raw.get("tyccles")
     return CoreConfig(
         series=tuple(raw["series"]),
         start=raw["start"],
@@ -82,4 +110,17 @@ def load_config(path: Path) -> CoreConfig:
         thresholds=Thresholds(**raw["thresholds"]),
         bootstrap=BootstrapConfig(**raw["bootstrap"]),
         ftic=FticConfig(**raw["ftic"]),
+        feature_set=str(raw.get("feature_set", "pca")),
+        tyccles=None
+        if tyccles is None
+        else TycclesConfig(
+            change_horizons_days=tuple(int(h) for h in tyccles["change_horizons_days"]),
+            rank_windows_days=tuple(int(w) for w in tyccles["rank_windows_days"]),
+            vol_window_days=int(tyccles["vol_window_days"]),
+            vol_rank_window_days=int(tyccles["vol_rank_window_days"]),
+        ),
+        apply_collinearity_rule=bool(raw.get("apply_collinearity_rule", True)),
+        jump_penalty_per_feature=bool(raw.get("jump_penalty_per_feature", False)),
+        frozen_train_end=raw.get("frozen_train_end"),
+        prior_trial_logs=tuple(str(p) for p in raw.get("prior_trial_logs", ())),
     )

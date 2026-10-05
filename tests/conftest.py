@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import date
 from typing import TYPE_CHECKING
 
@@ -10,7 +11,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from termo.config import BootstrapConfig, CoreConfig, FticConfig, Thresholds
+from termo.config import BootstrapConfig, CoreConfig, FticConfig, Thresholds, TycclesConfig
 
 if TYPE_CHECKING:
     from termo.dataset import ExperimentData
@@ -94,6 +95,25 @@ def make_config() -> CoreConfig:
     )
 
 
+def make_tyccles_config() -> CoreConfig:
+    """Spec 2 on the synthetic curve: ranks, no collinearity rule, a frozen K-means in 1995."""
+    return replace(
+        make_config(),
+        burn_in_days=504,
+        jump_penalties=(0.5, 3.0),
+        feature_set="tyccles",
+        tyccles=TycclesConfig(
+            change_horizons_days=(21, 42, 63, 84, 126, 189),
+            rank_windows_days=(126, 252),
+            vol_window_days=21,
+            vol_rank_window_days=252,
+        ),
+        apply_collinearity_rule=False,
+        jump_penalty_per_feature=True,
+        frozen_train_end=date(1995, 12, 31),
+    )
+
+
 @pytest.fixture(scope="session")
 def curve_and_regimes() -> tuple[pd.DataFrame, np.ndarray]:
     return make_curve()
@@ -121,3 +141,15 @@ def data(pre_holdout: pd.DataFrame, config: CoreConfig) -> ExperimentData:
     from termo.features.pipeline import FEATURE_NAMES
 
     return prepare(pre_holdout, config, FEATURE_NAMES)
+
+
+@pytest.fixture(scope="session")
+def tyccles_config() -> CoreConfig:
+    return make_tyccles_config()
+
+
+@pytest.fixture(scope="session")
+def tyccles_data(pre_holdout: pd.DataFrame, tyccles_config: CoreConfig) -> ExperimentData:
+    from termo.dataset import prepare, recipe_for
+
+    return prepare(pre_holdout, tyccles_config, recipe_for(tyccles_config).names)
