@@ -6,3 +6,4 @@
 - Disponibilidad de series: verificar en las filas del CSV, nunca en la nota/metadata de la pagina. Caso: nota de FRED dice DGS30 "discontinued 2002-2006" pero el CSV diario tiene valores en todo ese periodo; reporte un hueco inexistente.
 - Contar trials: el registro 'setup' no es un trial (spec 1 = 30 registros = 29 trials). Antes de escribir un total en un spec, contarlo con el mismo codigo que lo imprimira.
 - En un plan, `A + """...""".replace(...)` aplica el replace solo al literal final; poner parentesis. Los subagentes lo detectaron al correr la prueba.
+- Nombrar fases por promedios de 36 anos ('quien lidera el rally') puede fallar en una ventana de 2 anos con regimen secular distinto (empinamiento 2024-26). Nombres por direccion son robustos; los de forma de curva necesitan prueba propia.
