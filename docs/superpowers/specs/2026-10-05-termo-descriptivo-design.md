@@ -68,7 +68,7 @@ Una sola configuración: no hay rejilla ni selección en este spec.
 ### 3.3 SHAP por bloques
 
 - `TreeExplainer` sobre el imitador vigente en la fecha, para la clase de la fase del jump model.
-- Los 139 aportes se suman en 6 bloques (la suma es exacta por aditividad):
+- Los 139 aportes (en log-odds, la escala interna del modelo) se suman en 6 bloques (la suma es exacta por aditividad):
 
 | Bloque | Variables |
 |---|---|
@@ -101,7 +101,7 @@ Reglas:
 
 - Cambios a 63 días = diferencia simple de la serie cruda (no la suavizada de las variables).
 - Una fase con menos de 40 días en el periodo evaluado es **no evaluable** para D1–D4: se reporta y no reprueba. Si las tres son no evaluables, el veredicto es NO APTO por falta de evidencia.
-- D5 sobre pre-holdout: modelo congelado en el último corte de reentrenamiento ≤ 2014-12-31 contra el walk-forward, días posteriores a ese corte hasta 2024-09-30. Sobre holdout: congelado en el último corte anterior a 2024-10-01.
+- D5 sobre pre-holdout: un jump model ajustado una sola vez con datos hasta 2014-12-31 (y nunca reentrenado) contra el walk-forward, en los días posteriores hasta 2024-09-30. Sobre holdout: ajustado una sola vez con todos los datos hasta 2024-09-30, contra el walk-forward en los días del holdout. Es el mismo mecanismo de "refit congelado" de spec 2.
 - **Veredicto:** APTO si pasan todos los criterios evaluables; NO APTO si falla alguno.
 - **El holdout solo se abre si el diagnóstico pre-holdout es APTO.** Si D5 o D6 fallan en pre-holdout, la herramienta ya no sirve y no se gasta el holdout.
 - Los umbrales no se tocan después de ver el diagnóstico pre-holdout.
