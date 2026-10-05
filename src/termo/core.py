@@ -57,6 +57,23 @@ DIRTY_SUFFIX = "-dirty"
 MIN_HOLDOUT_DAYS = 120  # below this the holdout comparison means nothing
 BOUND_PACKAGES = ("numpy", "pandas", "scipy", "scikit-learn", "jumpmodels")
 MODEL_JUMP, MODEL_KMEANS, MODEL_INERTIA = "jump", "kmeans", "inertia"
+MODEL_KMEANS_FROZEN = "kmeans_frozen"
+FAMILIES = (MODEL_JUMP, MODEL_KMEANS_FROZEN)  # each has its own winner and criteria
+HYPOTHESES = (
+    "H1 (diagnostic, not a criterion): with rank features the refit K-means baselines pass "
+    "the minimum median duration.",
+    "H2: at least one jump model configuration passes every blocking criterion.",
+    "H3: the frozen K-means passes every blocking criterion.",
+)
+TYCCLES_LIMITATIONS = (
+    "Ranks of multi-month changes are smooth by construction: stability and duration can pass "
+    "without any information about the future; separation and independence decide.",
+    "139 correlated inputs without pruning: the distance is dominated by level changes.",
+    "The 102-input TYCCLES recipe is reconstructed from the text, not reproduced.",
+    "The frozen K-means reads 1998-2024 with centroids from 1979-1997; HSBC fitted on 50 years.",
+    "PBO over four frozen configurations is nearly blind.",
+    "Second look at the same pre-holdout data: every test family has had two chances.",
+)
 KNOWN_LIMITATIONS = (
     "DGS30 between 2002-02-19 and 2006-02-08 is built differently from the rest of the series.",
     "S1 is high almost by construction: consecutive windows share most of their data.",
@@ -75,6 +92,10 @@ def jump_trial_id(n_states: int, jump_penalty: float) -> str:
 
 def kmeans_trial_id(n_states: int) -> str:
     return f"kmeans_k{n_states}"
+
+
+def frozen_trial_id(n_states: int) -> str:
+    return f"kmf_k{n_states}"
 
 
 def config_fingerprint(config: CoreConfig) -> dict[str, Any]:
@@ -119,6 +140,25 @@ def take_snapshot(
     write_snapshot(snapshot_dir, texts, downloaded_at)
 
 
+def prior_log_summary(config: CoreConfig) -> list[dict[str, Any]]:
+    """What earlier registries hold, counted now so that the report cannot forget them."""
+    summary: list[dict[str, Any]] = []
+    for path in config.prior_trial_logs:
+        log = TrialLog(Path(path))
+        if not log.path.exists():
+            raise TrialLogError(f"prior trial log not found: {path}")
+        trials = [t for t in log.registrations() if t != SETUP_TRIAL]
+        report = log.last_report()
+        summary.append(
+            {
+                "path": path,
+                "n_trials": len(trials),
+                "verdict": None if report is None else report["verdict"],
+            }
+        )
+    return summary
+
+
 def register_trials(
     config: CoreConfig, curve: pd.DataFrame, log: TrialLog, snapshot_hash: str, code_commit: str
 ) -> tuple[str, ...]:
@@ -137,6 +177,8 @@ def register_trials(
             "columns": list(columns),
             "config": config_fingerprint(config),
             "environment": environment_fingerprint(),
+            "hypotheses": list(HYPOTHESES),
+            "prior_trial_logs": prior_log_summary(config),
         },
         snapshot_hash,
         code_commit,
@@ -158,6 +200,15 @@ def register_trials(
             snapshot_hash,
             code_commit,
         )
+        if config.frozen_train_end is not None:
+            log.register(
+                frozen_trial_id(n_states),
+                f"K-means fitted once through {config.frozen_train_end.isoformat()} with "
+                f"{n_states} states gives stable regimes that separate the forward 10Y move.",
+                {"model": MODEL_KMEANS_FROZEN, "n_states": n_states},
+                snapshot_hash,
+                code_commit,
+            )
     log.register(
         INERTIA_TRIAL,
         "Baseline: sign of the smoothed 63-day change of the level.",
@@ -255,7 +306,12 @@ def run_trials(
             echo(f"[ok] {trial_id} excess_short={found.excess:.4f}")
             continue
         # An exception leaves no result: the trial stays pending and the same command retries it.
-        evaluation = evaluate_config(data, int(spec["n_states"]), spec.get("jump_penalty"))
+        evaluation = evaluate_config(
+            data,
+            int(spec["n_states"]),
+            spec.get("jump_penalty"),
+            frozen=spec["model"] == MODEL_KMEANS_FROZEN,
+        )
         if spec["model"] == MODEL_KMEANS:
             status, reason = TrialStatus.KEPT, "baseline"
         elif evaluation.passes_duration:
