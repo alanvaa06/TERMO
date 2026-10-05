@@ -140,11 +140,11 @@ def test_the_holdout_period_keeps_the_phase_history_of_the_period_before(
     assert _build(joined, day, desc_config) == whole
     assert whole["episode_start"] == analysis.labels.index[10].date().isoformat()
     assert whole["episode_start"] < split.date().isoformat()  # the episode began before the split
-    # a holdout that starts after the first missing day cannot borrow the history
-    with pytest.raises(TrialLogError, match="do not join"):
-        span_periods(before, restrict(analysis, analysis.labels.index[16]))
-    with pytest.raises(TrialLogError, match="do not join"):
+    # overlapping periods are refused; a missing day at the boundary (a holiday) is not a gap
+    with pytest.raises(TrialLogError, match="overlap"):
         span_periods(before, restrict(analysis, analysis.labels.index[14]))
+    skipped = span_periods(before, restrict(analysis, analysis.labels.index[16]))
+    assert analysis.labels.index[15] not in skipped.labels.index
 
 
 def test_markdown_is_ascii_and_never_speaks_about_what_comes_next(

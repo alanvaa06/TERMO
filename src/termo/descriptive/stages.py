@@ -362,7 +362,9 @@ def render(title: str, period: str, payload: Mapping[str, Any]) -> str:
 def write_report(name: str, title: str, period: str, payload: Mapping[str, Any], out: Path) -> None:
     out.mkdir(parents=True, exist_ok=True)
     (out / f"{name}.md").write_text(render(title, period, payload), encoding="utf-8", newline="\n")
-    (out / f"{name}.json").write_text(json.dumps(payload, indent=2), encoding="utf-8", newline="\n")
+    (out / f"{name}.json").write_text(
+        json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8", newline="\n"
+    )
 
 
 def report_desc(
@@ -497,7 +499,7 @@ def holdout_desc(
     if past != recorded:
         raise TrialLogError(
             "the recomputed pre-holdout labels differ from the registered run: "
-            "the holdout result is not accepted"
+            "the holdout result is not accepted; the holdout is opened and lost"
         )
     checks = checks_of(analysis, curve, config)
     contents = analysis_bytes(analysis)

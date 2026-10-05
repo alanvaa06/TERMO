@@ -36,9 +36,9 @@ def span_periods(before: Analysis, after: Analysis) -> Analysis:
     periods must join: `after` starts on the business day right after `before` ends.
     """
     last, first = before.labels.index[-1], after.labels.index[0]
-    if first != last + pd.offsets.BDay(1):
+    if first <= last:  # strictly later; a holiday at the boundary is not a gap in the data
         raise TrialLogError(
-            f"the two periods do not join: one ends {last.date()}, the other starts {first.date()}"
+            f"the two periods overlap: one ends {last.date()}, the other starts {first.date()}"
         )
     return replace(after, labels=pd.concat([before.labels, after.labels]))
 
