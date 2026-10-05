@@ -38,6 +38,38 @@ def test_rank_ignores_the_future() -> None:
     )
 
 
+def test_equal_values_tie_with_the_average_rank() -> None:
+    rank = causal_rank(pd.Series([1.0, 2.0, 2.0]), 3)
+    assert rank.iloc[2] == pytest.approx(2.5 / 3)
+    # 0.1 + 0.2 and 0.3 differ in floating point; they are the same move
+    noisy = causal_rank(pd.Series([0.0, 0.3, 0.1 + 0.2]), 3)
+    assert noisy.iloc[2] == pytest.approx(2.5 / 3)
+
+
+def test_two_decimal_yields_rank_as_exact_basis_points(curve: pd.DataFrame) -> None:
+    rounded = curve.round(2)
+    raw = RECIPE.raw(rounded)
+    exact_bp = (rounded["DGS10"] * 100.0).round()  # integers: no floating-point noise
+    change = sum(exact_bp.diff(w) for w in (16, 21, 26)) / 3.0
+    expected = change.round(6).rolling(126, min_periods=126).rank(pct=True)
+    pd.testing.assert_series_equal(raw["d10_21_r126"], expected, check_names=False)
+
+
+def test_the_recipe_never_looks_ahead(curve: pd.DataFrame) -> None:
+    cut = 1500
+    altered = curve.copy()
+    altered.iloc[cut + 1 :] = altered.iloc[cut + 1 :] * 1.7 + 3.0
+    truncated = curve.iloc[: cut + 1]
+    reference = RECIPE.raw(curve).iloc[: cut + 1]
+    pd.testing.assert_frame_equal(RECIPE.raw(altered).iloc[: cut + 1], reference)
+    pd.testing.assert_frame_equal(RECIPE.raw(truncated), reference)
+    level = RECIPE.level_change(curve).iloc[: cut + 1]
+    pd.testing.assert_series_equal(RECIPE.level_change(altered).iloc[: cut + 1], level)
+    pd.testing.assert_series_equal(RECIPE.level_change(truncated), level)
+    # the check has power: the first altered row does change
+    assert not RECIPE.raw(altered).iloc[cut + 1].equals(RECIPE.raw(curve).iloc[cut + 1])
+
+
 def test_smoothing_delta_follows_the_spec() -> None:
     assert [smoothing_delta(h) for h in (21, 42, 63, 84, 126, 189)] == [5, 10, 15, 21, 31, 47]
 

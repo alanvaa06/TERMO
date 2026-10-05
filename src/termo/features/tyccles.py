@@ -17,6 +17,7 @@ from termo.features.velocity import smoothed_change
 LEVEL_HORIZON, LEVEL_DELTA = 63, 10  # the inertia baseline, as in spec 1
 SMOOTHING_DIVISOR = 4  # delta = horizon // 4: 21 -> 5, 63 -> 15, 189 -> 47
 MIN_HORIZON = 2 * SMOOTHING_DIVISOR  # so that 0 < delta < horizon
+RANK_DECIMALS = 6  # in basis points: far below the resolution of the data
 
 # name -> (tenors added, tenors subtracted): slope = long - short, curvature = 2 * belly - wings
 CURVE_MEASURES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
@@ -37,8 +38,13 @@ def smoothing_delta(horizon: int) -> int:
 
 
 def causal_rank(series: pd.Series, window: int) -> pd.Series:
-    """Percentile rank of today within the last `window` days, today included. Past only."""
-    return series.rolling(window, min_periods=window).rank(pct=True)
+    """Percentile rank of today within the last `window` days, today included. Past only.
+
+    Values are rounded first: yields come with two decimals, so equal moves must tie
+    (average rank) instead of being ordered by floating-point noise.
+    """
+    rounded = series.round(RANK_DECIMALS)
+    return rounded.rolling(window, min_periods=window).rank(pct=True)
 
 
 def curve_measures(curve: pd.DataFrame) -> pd.DataFrame:
