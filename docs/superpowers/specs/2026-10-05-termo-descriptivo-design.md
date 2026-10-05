@@ -182,3 +182,16 @@ Nuevo:
 - 139 variables correlacionadas: SHAP reparte el aporte entre gemelas; por eso se reporta por bloque.
 - La fase de venta no distingue bear flattener de bear steepener; la volatilidad no pesa.
 - Limitaciones heredadas: DGS30 2002–2006, snapshot fijo (lecturas más allá de 2026-10-01 requieren nuevo snapshot y es operación de spec 4).
+
+---
+
+## 9. Decisión posterior al holdout (2026-10-05, usuario) — declarada como post-hoc
+
+El holdout (abierto una vez, 2024-10-01 → 2026-09-30, 499 días, 4 episodios) dio **NO APTO** por D4: en la fase llamada "rally de la parte larga" la curva se empinó (+9.7 pb) en vez de aplanar. D1, D2, D3, D5 y D6 pasaron; "rally de la parte corta" no fue evaluable (19 días). El veredicto registrado de `desc_k3` no se reescribe.
+
+Lo que falló fue una **afirmación** (forma de curva en los rallies), no el mapa. Decisión:
+
+1. Las fases se renombran por lo que sí se sostuvo, dirección e intensidad: **venta / rally moderado / rally fuerte** (histórico 1988–2024: rally moderado = 10Y −29, 2Y −15; rally fuerte = 10Y −38, 2Y −56). Se retira toda afirmación de forma de curva y, con ella, el criterio D4. La intensidad no fue criterio registrado: se describe, no se prueba.
+2. Esto se decidió **después de ver el holdout**. Por eso: el holdout queda gastado; la única validación de los nombres nuevos es el modo sombra (lecturas en vivo). La hoja semanal lo dice.
+3. Registro nuevo `trials/desc2/` con `configs/desc2.yaml`: mismo modelo, mismos datos, mismos criterios salvo D4. Sus etapas recomputan y deben producir archivos byte-idénticos a `desc_k3` (el hash lo verifica). Su etapa de holdout se marca como **"holdout ya visto"** (abierto por `desc_k3`); sus números son los mismos que ya se vieron y se presentan así.
+4. La hoja semanal muestra una **tabla de validación por fase**: días en holdout, evaluable, duración mediana, coherencia de dirección, acierto del imitador; más la línea "veredicto registrado del holdout original: NO APTO por una afirmación retirada (D4)". Nada se esconde.
