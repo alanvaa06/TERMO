@@ -6,7 +6,7 @@ import pytest
 
 from termo.config import CoreConfig
 from termo.dataset import ExperimentData
-from termo.regime.model import jump_fitter
+from termo.regime.model import jump_fitter, kmeans_fitter
 from termo.validation.metrics import adjusted_rand
 from termo.validation.walkforward import inertia_labels, refit_cutoffs, run_walkforward
 
@@ -121,3 +121,17 @@ def test_inertia_labels_follow_the_sign_of_the_level_change(data: ExperimentData
     first = data.refits[0]
     block = first.level_change.loc[first.level_change.index > first.cutoff]
     assert (labels.loc[block.index] == (block > 0).astype(int)).all()
+
+
+def test_walkforward_returns_the_aligned_labels_of_every_refit(data: ExperimentData) -> None:
+    walk = run_walkforward(data.refits, kmeans_fitter(2), 2, data.daily_change_10y)
+    assert len(walk.fits) == len(data.refits)
+    blocks = []
+    for refit, fit in zip(data.refits, walk.fits, strict=True):
+        assert fit.cutoff == refit.cutoff
+        assert fit.insample.index.equals(refit.features.loc[: refit.cutoff].index)
+        assert fit.online.index.equals(refit.features.index)
+        assert set(fit.insample.unique()) <= {0, 1} and set(fit.online.unique()) <= {0, 1}
+        blocks.append(fit.online.loc[fit.online.index > refit.cutoff])
+    # the out-of-sample series is exactly the online labels after each cutoff, same names
+    pd.testing.assert_series_equal(pd.concat(blocks), walk.oos_labels)

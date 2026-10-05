@@ -23,9 +23,17 @@ class RefitData:
 
 
 @dataclass(frozen=True, eq=False)
+class RefitLabels:
+    cutoff: pd.Timestamp
+    insample: pd.Series  # labels of the training rows as fitted, with the stable names
+    online: pd.Series  # online labels of every row this refit can see, with the stable names
+
+
+@dataclass(frozen=True, eq=False)
 class WalkForwardResult:
     oos_labels: pd.Series  # daily out-of-sample labels with stable names
     consecutive_ari: tuple[float, ...]  # one per pair of consecutive refits
+    fits: tuple[RefitLabels, ...] = ()  # one per refit: what a surrogate learns from
 
 
 def refit_cutoffs(
@@ -80,6 +88,7 @@ def run_walkforward(
     """`target` names the states of the first fit (lowest in-state mean becomes state 0)."""
     previous: pd.Series | None = None
     blocks: list[pd.Series] = []
+    fits: list[RefitLabels] = []
     consecutive: list[float] = []
     for refit in refits:
         train = refit.features.loc[: refit.cutoff]
@@ -98,8 +107,11 @@ def run_walkforward(
             apply_permutation(model.online_labels(refit.features), permutation),
             index=refit.features.index,
         )
+        fits.append(RefitLabels(cutoff=refit.cutoff, insample=previous, online=online))
         blocks.append(online.loc[online.index > refit.cutoff])
-    return WalkForwardResult(oos_labels=pd.concat(blocks), consecutive_ari=tuple(consecutive))
+    return WalkForwardResult(
+        oos_labels=pd.concat(blocks), consecutive_ari=tuple(consecutive), fits=tuple(fits)
+    )
 
 
 def inertia_labels(refits: Sequence[RefitData]) -> pd.Series:
