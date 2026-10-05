@@ -1,4 +1,4 @@
-"""The stages of spec 3: register one model, run it, report the pre-holdout diagnostic.
+"""The stages of spec 3: register one model, run it, report the diagnostic, open the holdout.
 
 `run` writes every daily output to hashed CSV files. `report`, the holdout stage and
 the weekly reading only read those files: they never refit anything.
@@ -9,7 +9,8 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Callable, Mapping
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -17,14 +18,18 @@ import pandas as pd
 
 from termo.config import CoreConfig
 from termo.core import (
+    MIN_HOLDOUT_DAYS,
     SETUP_TRIAL,
     config_fingerprint,
     environment_fingerprint,
     prior_log_summary,
+    registered_columns,
     verify_binding,
 )
-from termo.dataset import ExperimentData, first_window_columns
-from termo.descriptive.criteria import Check, calibration, evaluate, verdict
+from termo.data.loader import load_curve, snapshot_days
+from termo.data.snapshot import snapshot_hash as hash_of_snapshot
+from termo.dataset import ExperimentData, first_window_columns, prepare, recipe_for
+from termo.descriptive.criteria import APTO, Check, calibration, evaluate, verdict
 from termo.experiment import effective_penalty
 from termo.regime.model import jump_fitter
 from termo.surrogate.explain import block_map, block_sums, explain, top_variables
@@ -325,4 +330,62 @@ def report_desc(
     write_report(
         "diagnostic", "descriptive diagnostic", "pre-holdout, seen data", payload, reports_dir
     )
+    return str(payload["verdict"])
+
+
+def holdout_desc(
+    config: CoreConfig,
+    snapshot_dir: Path,
+    log: TrialLog,
+    trials_dir: Path,
+    reports_dir: Path,
+    code_commit: str,
+) -> str:
+    """The one evaluation on the holdout. The log refuses a second one.
+
+    Everything that can fail by something knowable in advance is checked before the
+    holdout is recorded as opened. Opened without a result means lost: that is the
+    policy the user chose.
+    """
+    _desc(config)
+    report = log.last_report()
+    if report is None or report.get("stage") != "diagnostic" or report.get("verdict") != APTO:
+        raise TrialLogError("the holdout opens only after an APTO pre-holdout diagnostic report")
+    trial = desc_trial_id(config)
+    if report.get("final_trial_id") != trial or not log.has_result(trial):
+        raise TrialLogError(f"the diagnostic report is not about {trial}")
+    verify_binding(log, config, hash_of_snapshot(snapshot_dir), code_commit)
+    columns = registered_columns(log)
+    recipe_for(config)
+    days = snapshot_days(snapshot_dir, config.series, config.start)
+    start = pd.Timestamp(config.holdout_start)
+    holdout_days = int((days >= start).sum())
+    if holdout_days < MIN_HOLDOUT_DAYS:
+        raise TrialLogError(
+            f"the snapshot has {holdout_days} holdout days; at least {MIN_HOLDOUT_DAYS} are needed"
+        )
+    # D5 on the holdout: a model fitted once on everything before it
+    frozen_through = replace(config, frozen_train_end=config.holdout_start - timedelta(days=1))
+
+    log.open_holdout(trial)  # recorded before any holdout row is used
+    curve = load_curve(
+        snapshot_dir, config.series, config.start, config.holdout_start, final_evaluation=True
+    )
+    analysis = restrict(analyse(prepare(curve, frozen_through, columns)), start)
+    checks = checks_of(analysis, curve, config)
+    directory = trials_dir / HOLDOUT_DIR
+    files = save_analysis(analysis, directory)
+    payload = {
+        "stage": "holdout",
+        "verdict": verdict(checks),
+        "final_trial_id": trial,
+        "checks": [asdict(c) for c in checks],
+        "days": int(len(analysis.labels)),
+        "calibration": calibration(analysis.labels, analysis.proba, CALIBRATION_BINS),
+        "files": files,
+        "limits": list(LIMITS),
+        "disclosure": disclosure(log),
+    }
+    log.record_holdout_result(payload)
+    write_report("holdout", "descriptive holdout", "holdout, clean data", payload, reports_dir)
     return str(payload["verdict"])

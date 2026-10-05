@@ -1,4 +1,4 @@
-"""Spec 3 end to end on the synthetic curve: register, run, report (the holdout is Task 8)."""
+"""Spec 3 end to end on the synthetic curve: register, run, report, holdout."""
 
 from __future__ import annotations
 
@@ -20,9 +20,11 @@ from termo.dataset import ExperimentData, prepare
 from termo.descriptive.criteria import APTO, NO_APTO
 from termo.descriptive.stages import (
     FILES,
+    HOLDOUT_DIR,
     PRE_HOLDOUT_DIR,
     analyse,
     desc_trial_id,
+    holdout_desc,
     load_analysis,
     register_desc,
     report_desc,
@@ -208,3 +210,77 @@ def test_report_refuses_tampered_files_and_a_changed_configuration(
             report_desc(data, log, trials_dir, tmp_path, data_hash, COMMIT)
     finally:
         path.write_bytes(original)
+
+
+def _approved_copy(log: TrialLog, tmp_path: Path, verdict: str = APTO) -> TrialLog:
+    """A private copy of the finished log whose last report says `verdict`."""
+    copy = TrialLog(tmp_path / "trials.jsonl")
+    copy.path.write_text(log.path.read_text(encoding="utf-8"), encoding="utf-8")
+    last = log.last_report()
+    assert last is not None
+    payload = {k: v for k, v in last.items() if k not in {"kind", "trial_id", "at"}}
+    copy.record_report({**payload, "verdict": verdict})
+    return copy
+
+
+def test_holdout_needs_an_apt_diagnostic(
+    finished: Path,
+    tmp_path: Path,
+    snapshot_dir: Path,
+    log: TrialLog,
+    trials_dir: Path,
+    desc_config: CoreConfig,
+) -> None:
+    empty = TrialLog(tmp_path / "empty.jsonl")
+    with pytest.raises(TrialLogError):
+        holdout_desc(desc_config, snapshot_dir, empty, trials_dir, tmp_path, COMMIT)
+    refused = _approved_copy(log, tmp_path, NO_APTO)
+    with pytest.raises(TrialLogError, match="diagnostic"):
+        holdout_desc(desc_config, snapshot_dir, refused, trials_dir, tmp_path, COMMIT)
+    assert not refused.holdout_opened()
+
+
+def test_holdout_checks_everything_before_opening(
+    finished: Path,
+    tmp_path: Path,
+    snapshot_dir: Path,
+    log: TrialLog,
+    trials_dir: Path,
+    desc_config: CoreConfig,
+) -> None:
+    copy = _approved_copy(log, tmp_path)
+    with pytest.raises(TrialLogError, match="code commit"):
+        holdout_desc(desc_config, snapshot_dir, copy, trials_dir, tmp_path, "another-commit")
+    changed = replace(desc_config, refit_weeks=13)
+    with pytest.raises(TrialLogError, match="configuration"):
+        holdout_desc(changed, snapshot_dir, copy, trials_dir, tmp_path, COMMIT)
+    assert not copy.holdout_opened()
+
+
+def test_holdout_runs_once_on_holdout_days_only(
+    finished: Path,
+    tmp_path: Path,
+    snapshot_dir: Path,
+    log: TrialLog,
+    desc_config: CoreConfig,
+    curve: pd.DataFrame,
+) -> None:
+    copy = _approved_copy(log, tmp_path)
+    private_trials, reports = tmp_path / "trials", tmp_path / "reports"
+    result = holdout_desc(desc_config, snapshot_dir, copy, private_trials, reports, COMMIT)
+
+    start = pd.Timestamp(desc_config.holdout_start)
+    kinds = [r["kind"] for r in copy.records()]
+    assert kinds[-2:] == ["holdout_opened", "holdout_result"]
+    logged = copy.records()[-1]
+    assert logged["verdict"] == result in {APTO, NO_APTO} and len(logged["checks"]) == 7
+    assert logged["days"] == int((curve.index >= start).sum())
+    loaded = load_analysis(private_trials / HOLDOUT_DIR, logged["files"])
+    assert loaded.labels.index[0] >= start and loaded.proba.index.equals(loaded.labels.index)
+    # the frozen map of the holdout was fitted on everything before it, never on holdout days
+    assert loaded.frozen_labels.index.equals(loaded.labels.index)
+    payload = json.loads((reports / "holdout.json").read_text(encoding="utf-8"))
+    assert payload["verdict"] == result and payload["stage"] == "holdout"
+    assert (reports / "holdout.md").read_text(encoding="utf-8").isascii()
+    with pytest.raises(TrialLogError, match="already been opened"):
+        holdout_desc(desc_config, snapshot_dir, copy, private_trials, reports, COMMIT)
