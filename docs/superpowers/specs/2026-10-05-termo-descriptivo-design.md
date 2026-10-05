@@ -141,6 +141,8 @@ Reglas:
 - Antes de que exista un resultado de holdout, solo se pueden leer fechas anteriores a 2024-10-01 (el cargador se niega a lo demás).
 - La lectura de una fecha usa solo datos hasta esa fecha (modelo e imitador del último corte anterior).
 - Ninguna cifra sobre movimientos posteriores a la fecha.
+- La lectura se produce siempre, también con veredicto NO APTO: el comité recibe su hoja cada semana. Si el informe que gobierna (el holdout cuando tiene resultado; si no, el diagnóstico pre-holdout) no es APTO, la hoja abre con un aviso de "no validada" que nombra los criterios fallidos; los impulsores se muestran igual, y si falló D6 el encabezado de impulsores avisa que las explicaciones no están validadas.
+- `read` amarra la configuración, el snapshot y el SHA-256 de cada archivo que carga, pero no el commit del código ni las versiones de librerías: un cambio de código o una actualización posterior sigue permitiendo leer esta bitácora. La lectura registra con qué commit se generó y cuál quedó registrado. Las demás etapas conservan el amarre completo.
 
 ---
 

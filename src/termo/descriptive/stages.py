@@ -168,6 +168,20 @@ def holdout_result(log: TrialLog) -> dict[str, Any] | None:
     return found[-1] if found else None
 
 
+def diagnostic_report(log: TrialLog) -> dict[str, Any] | None:
+    """The last diagnostic report in the log: the one that governs before the holdout."""
+    found = [
+        r
+        for r in log.records()
+        if r["kind"] == RecordKind.REPORT.value and r.get("stage") == "diagnostic"
+    ]
+    return found[-1] if found else None
+
+
+def failed_checks(report: Mapping[str, Any]) -> list[str]:
+    return [str(c["name"]) for c in report["checks"] if c["passed"] is False]
+
+
 def _write_bytes(path: Path, data: bytes) -> None:
     path.write_bytes(data)
 

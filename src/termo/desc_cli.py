@@ -11,7 +11,13 @@ import pandas as pd
 
 from termo.cli import code_identity
 from termo.config import load_config
-from termo.core import registered_columns, verify_binding
+from termo.core import (
+    SETUP_TRIAL,
+    environment_fingerprint,
+    registered_columns,
+    verify_binding,
+    verify_data_binding,
+)
 from termo.data.loader import load_curve
 from termo.data.snapshot import snapshot_hash
 from termo.dataset import prepare
@@ -19,6 +25,8 @@ from termo.descriptive.stages import (
     HOLDOUT_DIR,
     PRE_HOLDOUT_DIR,
     desc_trial_id,
+    diagnostic_report,
+    failed_checks,
     holdout_desc,
     holdout_result,
     load_analysis,
@@ -26,14 +34,19 @@ from termo.descriptive.stages import (
     report_desc,
     run_desc,
 )
-from termo.reading import build_reading, span_periods, write_reading
+from termo.reading import (
+    FIDELITY_CHECK,
+    LOST_HOLDOUT,
+    build_reading,
+    span_periods,
+    write_reading,
+)
 from termo.validation.trials import TrialLog, TrialLogError
 
 TRIALS_DIR = Path("trials") / "desc"
 REPORTS_DIR = Path("reports") / "desc"
 TRIALS_FILE = "trials.jsonl"
 APPROVAL_FLAG = "--i-approve-opening-the-holdout"
-LOST_HOLDOUT = "opened, no result (lost)"
 
 
 def iso_date(text: str) -> date:
@@ -45,33 +58,45 @@ def iso_date(text: str) -> date:
 
 def _read(args: argparse.Namespace, log: TrialLog, data_hash: str, commit: str) -> Path:
     config = load_config(args.config)
-    verify_binding(log, config, data_hash, commit)
+    # the reading binds the data, not the code: later code must still read this log
+    verify_data_binding(log, config, data_hash)
     day: date = args.date
-    report = log.last_report()
+    report = diagnostic_report(log)
     trial = desc_trial_id(config)
     if report is None or trial not in log.results():
-        raise TrialLogError("no validated reading: run the run and report stages first")
+        raise TrialLogError("no reading: run the run and report stages first")
     holdout = holdout_result(log)
     lost = holdout is None and log.holdout_opened()
     holdout_status: str | None = None if holdout is None else str(holdout["verdict"])
     if lost:
         holdout_status = LOST_HOLDOUT
-    status = {"diagnostic": str(report["verdict"]), "holdout": holdout_status}
+    governing = report if holdout is None else holdout
+    failed = failed_checks(governing)
+    validation = {
+        "diagnostic": str(report["verdict"]),
+        "holdout": holdout_status,
+        "failed_checks": failed,
+        "fidelity_failed": FIDELITY_CHECK in failed,
+    }
     in_holdout = pd.Timestamp(day) >= pd.Timestamp(config.holdout_start)
     if in_holdout and holdout is None:
         raise TrialLogError(
-            "no validated reading for that date: the holdout "
-            + (LOST_HOLDOUT if lost else "has no result")
+            "no reading for that date: the holdout " + (LOST_HOLDOUT if lost else "has no result")
         )
     files = log.results()[trial]["metrics"]["files"]
     analysis = load_analysis(TRIALS_DIR / PRE_HOLDOUT_DIR, files)
     if in_holdout and holdout is not None:
         # the holdout outputs, with the labels before them so an episode keeps its start
         analysis = span_periods(analysis, load_analysis(TRIALS_DIR / HOLDOUT_DIR, holdout["files"]))
+    generated_with = {
+        "code_commit": commit,
+        "registered_code_commit": str(log.registrations()[SETUP_TRIAL]["code_commit"]),
+        "environment": environment_fingerprint(),
+    }
     try:
-        reading = build_reading(analysis, day, config, status)
+        reading = build_reading(analysis, day, config, validation, generated_with)
     except KeyError as error:
-        raise TrialLogError(f"no validated reading for that date: {error.args[0]}") from error
+        raise TrialLogError(f"no reading for that date: {error.args[0]}") from error
     out = REPORTS_DIR / "readings"
     write_reading(reading, out)
     return out / f"{reading['date']}.md"

@@ -11,10 +11,16 @@ import pytest
 
 from conftest import fake_fred
 from termo.config import load_config
-from termo.core import take_snapshot
+from termo.core import environment_fingerprint, take_snapshot
 from termo.desc_cli import LOST_HOLDOUT, REPORTS_DIR, TRIALS_DIR, TRIALS_FILE, main
 from termo.descriptive.criteria import APTO, NO_APTO
-from termo.descriptive.stages import HOLDOUT_DIR, PRE_HOLDOUT_DIR, holdout_desc
+from termo.descriptive.stages import (
+    HOLDOUT_DIR,
+    PRE_HOLDOUT_DIR,
+    failed_checks,
+    holdout_desc,
+    holdout_result,
+)
 from termo.validation.trials import TrialLog, TrialLogError
 from test_cli import EXP2_SMALL_CONFIG
 
@@ -101,6 +107,15 @@ def _reading(day: str) -> dict[str, object]:
     return found
 
 
+def _markdown(day: str) -> str:
+    return (REPORTS_DIR / "readings" / f"{day}.md").read_text(encoding="utf-8")
+
+
+def _banner(period: str, report: dict[str, object]) -> str:
+    failed = ", ".join(failed_checks(report)) or "none evaluable"  # type: ignore[arg-type]
+    return f"**[NOT VALIDATED: {period} {str(report['verdict']).upper()}; failed: {failed}]**"
+
+
 def _approve(log: TrialLog) -> None:
     """Append a diagnostic report that says APTO, so that the holdout may open."""
     last = log.last_report()
@@ -115,16 +130,29 @@ def test_stages_and_reading_through_the_command_line(
     assert (TRIALS_DIR / PRE_HOLDOUT_DIR / "proba.csv").exists()
     assert (REPORTS_DIR / "diagnostic.md").exists()
     assert main(["read", *_stage(here), "--date", PRE_HOLDOUT_DATE]) == 0
-    reading = REPORTS_DIR / "readings" / f"{PRE_HOLDOUT_DATE}.md"
-    assert reading.exists() and "does not anticipate" in reading.read_text(encoding="utf-8")
+    markdown = _markdown(PRE_HOLDOUT_DATE)
+    assert "does not anticipate" in markdown and markdown.isascii()
     assert capsys.readouterr().out.isascii()
-    assert _reading(PRE_HOLDOUT_DATE)["validation"] == {
-        "diagnostic": _log().last_report()["verdict"],  # type: ignore[index]
+    report = _log().last_report()
+    assert report is not None and report["verdict"] == NO_APTO  # the synthetic curve fails
+    failed = failed_checks(report)
+    assert failed  # a NO-APTO with named failures: the banner must name them
+    reading = _reading(PRE_HOLDOUT_DATE)
+    assert reading["validation"] == {
+        "diagnostic": NO_APTO,
         "holdout": None,
+        "failed_checks": failed,
+        "fidelity_failed": "D6_fidelity" in failed,
     }
+    assert reading["drivers_validated"] is ("D6_fidelity" not in failed)
+    # the sheet is produced anyway, and says before anything else that it is not validated
+    banner = _banner("pre-holdout diagnostic", report)
+    assert markdown.splitlines()[2] == banner and "NO-APTO" in banner
+    assert reading["drivers"] and "## What pushes toward this phase" in markdown
+    assert markdown.rstrip().endswith(f"Generated with code {COMMIT}")
 
     # a holdout date has no reading until a holdout result exists
-    with pytest.raises(TrialLogError, match="no validated reading"):
+    with pytest.raises(TrialLogError, match="no reading"):
         main(["read", *_stage(here), "--date", HOLDOUT_DATE])
     # the holdout does not open without the explicit flag, nor with an abbreviation of it
     with pytest.raises(SystemExit):
@@ -145,10 +173,84 @@ def test_a_lost_holdout_is_said_in_the_reading_and_closes_holdout_dates(private:
     validation = _reading(PRE_HOLDOUT_DATE)["validation"]
     assert isinstance(validation, dict) and validation["holdout"] == LOST_HOLDOUT
     assert LOST_HOLDOUT == "opened, no result (lost)"
-    markdown = (REPORTS_DIR / "readings" / f"{PRE_HOLDOUT_DATE}.md").read_text(encoding="utf-8")
+    markdown = _markdown(PRE_HOLDOUT_DATE)
     assert f"- Holdout: {LOST_HOLDOUT}" in markdown
+    report = _log().last_report()
+    assert report is not None  # the diagnostic still governs: its banner, its failures
+    assert markdown.splitlines()[2] == _banner("pre-holdout diagnostic", report)
+    assert validation["failed_checks"] == failed_checks(report)
     with pytest.raises(TrialLogError, match="lost"):
         main(["read", *_stage(private), "--date", HOLDOUT_DATE])
+
+
+def test_a_reading_binds_the_data_and_records_the_code_without_requiring_it(
+    private: Path, curve: pd.DataFrame, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Later code or libraries still read this log; another configuration or snapshot do not."""
+    monkeypatch.setattr("termo.desc_cli.code_identity", lambda: "code-4")
+    registered = environment_fingerprint()
+    monkeypatch.setattr(
+        "termo.core.environment_fingerprint", lambda: {**registered, "numpy": "0.0.0"}
+    )
+    # the stages that compute are still bound to the registered code and environment
+    for stage in ("run", "report"):
+        with pytest.raises(TrialLogError, match="code commit"):
+            main([stage, *_stage(private)])
+    with pytest.raises(TrialLogError, match="environment"):
+        monkeypatch.setattr("termo.desc_cli.code_identity", lambda: COMMIT)
+        main(["run", *_stage(private)])
+    monkeypatch.setattr("termo.desc_cli.code_identity", lambda: "code-4")
+
+    assert main(["read", *_stage(private), "--date", PRE_HOLDOUT_DATE]) == 0
+    reading = _reading(PRE_HOLDOUT_DATE)
+    assert reading["generated_with"] == {
+        "code_commit": "code-4",
+        "registered_code_commit": COMMIT,
+        "environment": registered,
+    }
+    assert (
+        _markdown(PRE_HOLDOUT_DATE)
+        .rstrip()
+        .endswith(f"Generated with code code-4 (registered: {COMMIT})")
+    )
+
+    changed = Path("changed.yaml")
+    changed.write_text(
+        DESC_SMALL_CONFIG.replace("refit_weeks: 26", "refit_weeks: 13"), encoding="utf-8"
+    )
+    assert "refit_weeks: 13" in changed.read_text(encoding="utf-8")
+    with pytest.raises(TrialLogError, match="configuration"):
+        main(
+            [
+                "read",
+                "--config",
+                str(changed),
+                "--snapshot",
+                str(private / "snapshot"),
+                "--date",
+                PRE_HOLDOUT_DATE,
+            ]
+        )
+
+    other = Path("other-snapshot")
+    take_snapshot(
+        load_config(private / "desc.yaml"),
+        other,
+        fake_fred(curve + 0.05),
+        "2026-10-03T00:00:00+00:00",
+    )
+    with pytest.raises(TrialLogError, match="data snapshot"):
+        main(
+            [
+                "read",
+                "--config",
+                str(private / "desc.yaml"),
+                "--snapshot",
+                str(other),
+                "--date",
+                PRE_HOLDOUT_DATE,
+            ]
+        )
 
 
 def test_a_holdout_reading_counts_the_episode_from_before_the_holdout(private: Path) -> None:
@@ -170,7 +272,21 @@ def test_a_holdout_reading_counts_the_episode_from_before_the_holdout(private: P
     assert main(["read", *_stage(private), "--date", first.date().isoformat()]) == 0
     reading = _reading(first.date().isoformat())
     assert reading["phase"] == int(after.iloc[0])
-    assert reading["validation"] == {"diagnostic": APTO, "holdout": verdict}
+    holdout = holdout_result(_log())
+    assert holdout is not None and holdout["verdict"] == verdict
+    assert reading["validation"] == {
+        "diagnostic": APTO,
+        "holdout": verdict,
+        "failed_checks": failed_checks(holdout),
+        "fidelity_failed": "D6_fidelity" in failed_checks(holdout),
+    }
+    markdown = _markdown(first.date().isoformat())
+    assert "- Pre-holdout diagnostic: APTO" in markdown
+    assert f"- Holdout: {verdict.upper()}" in markdown
+    if verdict == APTO:
+        assert "NOT VALIDATED" not in markdown
+    else:  # the holdout governs the banner once it has a result
+        assert markdown.splitlines()[2] == _banner("holdout", holdout)
 
     whole = pd.concat([before, after]).loc[:first]
     changed = whole.ne(whole.iloc[-1]).to_numpy().nonzero()[0]

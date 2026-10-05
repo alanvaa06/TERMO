@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import platform
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import asdict, dataclass
 from datetime import date
 from importlib import metadata
@@ -235,21 +235,40 @@ def registered_columns(log: TrialLog) -> tuple[str, ...]:
     return tuple(_setup(log)["config"]["columns"])
 
 
+def _refuse_changes(bound: Iterable[tuple[str, Any, Any]]) -> None:
+    changed = [name for name, registered, current in bound if registered != current]
+    if changed:
+        raise TrialLogError("this does not match the registration; changed: " + ", ".join(changed))
+
+
+def _data_binding(
+    setup: Mapping[str, Any], config: CoreConfig, snapshot_hash: str
+) -> list[tuple[str, Any, Any]]:
+    return [
+        ("configuration", setup["config"]["config"], config_fingerprint(config)),
+        ("data snapshot", setup["snapshot_hash"], snapshot_hash),
+    ]
+
+
 def verify_binding(log: TrialLog, config: CoreConfig, snapshot_hash: str, code_commit: str) -> None:
     """Refuse to work with anything other than what was registered."""
     setup = _setup(log)
-    changed = [
-        name
-        for name, registered, current in (
-            ("configuration", setup["config"]["config"], config_fingerprint(config)),
+    _refuse_changes(
+        [
+            *_data_binding(setup, config, snapshot_hash),
             ("environment", setup["config"]["environment"], environment_fingerprint()),
-            ("data snapshot", setup["snapshot_hash"], snapshot_hash),
             ("code commit", setup["code_commit"], code_commit),
-        )
-        if registered != current
-    ]
-    if changed:
-        raise TrialLogError("this does not match the registration; changed: " + ", ".join(changed))
+        ]
+    )
+
+
+def verify_data_binding(log: TrialLog, config: CoreConfig, snapshot_hash: str) -> None:
+    """Refuse any configuration or snapshot other than the registered ones.
+
+    The code and the library versions are not checked: a reading only formats hashed
+    outputs, so later code or a library upgrade must still be able to produce it.
+    """
+    _refuse_changes(_data_binding(_setup(log), config, snapshot_hash))
 
 
 def save_labels(labels: pd.Series, path: Path) -> str:
