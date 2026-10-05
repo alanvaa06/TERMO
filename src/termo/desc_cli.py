@@ -20,45 +20,54 @@ from termo.descriptive.stages import (
     PRE_HOLDOUT_DIR,
     desc_trial_id,
     holdout_desc,
+    holdout_result,
     load_analysis,
     register_desc,
     report_desc,
     run_desc,
 )
-from termo.reading import build_reading, write_reading
-from termo.validation.trials import RecordKind, TrialLog, TrialLogError
+from termo.reading import build_reading, span_periods, write_reading
+from termo.validation.trials import TrialLog, TrialLogError
 
 TRIALS_DIR = Path("trials") / "desc"
 REPORTS_DIR = Path("reports") / "desc"
 TRIALS_FILE = "trials.jsonl"
 APPROVAL_FLAG = "--i-approve-opening-the-holdout"
+LOST_HOLDOUT = "opened, no result (lost)"
 
 
-def _holdout_result(log: TrialLog) -> dict[str, object] | None:
-    found = [r for r in log.records() if r["kind"] == RecordKind.HOLDOUT_RESULT.value]
-    return found[-1] if found else None
+def iso_date(text: str) -> date:
+    try:
+        return date.fromisoformat(text)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(f"{text!r} is not a date in YYYY-MM-DD form") from error
 
 
 def _read(args: argparse.Namespace, log: TrialLog, data_hash: str, commit: str) -> Path:
     config = load_config(args.config)
     verify_binding(log, config, data_hash, commit)
-    day = date.fromisoformat(args.date)
+    day: date = args.date
     report = log.last_report()
     trial = desc_trial_id(config)
     if report is None or trial not in log.results():
         raise TrialLogError("no validated reading: run the run and report stages first")
-    holdout = _holdout_result(log)
-    status = {
-        "diagnostic": str(report["verdict"]),
-        "holdout": None if holdout is None else str(holdout["verdict"]),
-    }
-    if pd.Timestamp(day) < pd.Timestamp(config.holdout_start):
-        files = log.results()[trial]["metrics"]["files"]
-        analysis = load_analysis(TRIALS_DIR / PRE_HOLDOUT_DIR, files)
-    elif holdout is not None:
-        analysis = load_analysis(TRIALS_DIR / HOLDOUT_DIR, holdout["files"])  # type: ignore[arg-type]
-    else:
-        raise TrialLogError("no validated reading for that date: the holdout has no result")
+    holdout = holdout_result(log)
+    lost = holdout is None and log.holdout_opened()
+    holdout_status: str | None = None if holdout is None else str(holdout["verdict"])
+    if lost:
+        holdout_status = LOST_HOLDOUT
+    status = {"diagnostic": str(report["verdict"]), "holdout": holdout_status}
+    in_holdout = pd.Timestamp(day) >= pd.Timestamp(config.holdout_start)
+    if in_holdout and holdout is None:
+        raise TrialLogError(
+            "no validated reading for that date: the holdout "
+            + (LOST_HOLDOUT if lost else "has no result")
+        )
+    files = log.results()[trial]["metrics"]["files"]
+    analysis = load_analysis(TRIALS_DIR / PRE_HOLDOUT_DIR, files)
+    if in_holdout and holdout is not None:
+        # the holdout outputs, with the labels before them so an episode keeps its start
+        analysis = span_periods(analysis, load_analysis(TRIALS_DIR / HOLDOUT_DIR, holdout["files"]))
     try:
         reading = build_reading(analysis, day, config, status)
     except KeyError as error:
@@ -69,11 +78,13 @@ def _read(args: argparse.Namespace, log: TrialLog, data_hash: str, commit: str) 
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="termo-desc", description="TERMO: descriptive tool")
+    parser = argparse.ArgumentParser(
+        prog="termo-desc", description="TERMO: descriptive tool", allow_abbrev=False
+    )
     parser.add_argument("stage", choices=["register", "run", "report", "holdout", "read"])
     parser.add_argument("--config", type=Path, default=Path("configs/desc.yaml"))
     parser.add_argument("--snapshot", type=Path, required=True, help="snapshot directory")
-    parser.add_argument("--date", help="reading date, YYYY-MM-DD (stage read)")
+    parser.add_argument("--date", type=iso_date, help="reading date, YYYY-MM-DD (stage read)")
     parser.add_argument(
         APPROVAL_FLAG,
         dest="approved",

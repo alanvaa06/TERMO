@@ -11,8 +11,9 @@ import pandas as pd
 import pytest
 
 from termo.config import CoreConfig
-from termo.descriptive.stages import DISCLAIMER, Analysis
-from termo.reading import build_reading, render_reading, write_reading
+from termo.descriptive.stages import DISCLAIMER, Analysis, restrict
+from termo.reading import build_reading, render_reading, span_periods, write_reading
+from termo.validation.trials import TrialLogError
 
 BLOCKS = ["nivel corto", "nivel medio", "nivel largo", "pendientes", "curvatura", "volatilidad"]
 STATUS: dict[str, str | None] = {"diagnostic": "apto", "holdout": None}
@@ -71,6 +72,50 @@ def test_a_date_without_a_reading_is_refused(desc_config: CoreConfig) -> None:
     analysis = _analysis()
     with pytest.raises(KeyError, match="no reading"):
         build_reading(analysis, date(2030, 1, 1), desc_config, STATUS)
+
+
+def test_a_reading_never_uses_data_after_its_date(desc_config: CoreConfig) -> None:
+    analysis = _analysis()
+    day = analysis.labels.index[20]
+    truncated = Analysis(  # nothing after the date: the day itself is the last row
+        labels=analysis.labels.loc[:day],
+        frozen_labels=analysis.frozen_labels.loc[:day],
+        proba=analysis.proba.loc[:day],
+        shap_blocks=analysis.shap_blocks.loc[:day],
+        shap_top=analysis.shap_top.loc[:day],
+    )
+    assert truncated.labels.index[-1] == day and len(truncated.labels) < len(analysis.labels)
+    whole = build_reading(analysis, day.date(), desc_config, STATUS)
+    assert build_reading(truncated, day.date(), desc_config, STATUS) == whole
+
+
+def test_the_holdout_period_keeps_the_phase_history_of_the_period_before(
+    desc_config: CoreConfig,
+) -> None:
+    analysis = _analysis()
+    split = analysis.labels.index[15]  # inside the run of phase 0 that starts on day 10
+    before = Analysis(
+        labels=analysis.labels.loc[: split - pd.Timedelta(days=1)],
+        frozen_labels=analysis.frozen_labels.loc[: split - pd.Timedelta(days=1)],
+        proba=analysis.proba.loc[: split - pd.Timedelta(days=1)],
+        shap_blocks=analysis.shap_blocks.loc[: split - pd.Timedelta(days=1)],
+        shap_top=analysis.shap_top.loc[: split - pd.Timedelta(days=1)],
+    )
+    after = restrict(analysis, split)
+    joined = span_periods(before, after)
+    pd.testing.assert_series_equal(joined.labels, analysis.labels)
+    assert joined.proba is after.proba and joined.shap_blocks is after.shap_blocks
+    assert joined.shap_top is after.shap_top and joined.frozen_labels is after.frozen_labels
+    day = analysis.labels.index[20].date()
+    whole = build_reading(analysis, day, desc_config, STATUS)
+    assert build_reading(joined, day, desc_config, STATUS) == whole
+    assert whole["episode_start"] == analysis.labels.index[10].date().isoformat()
+    assert whole["episode_start"] < split.date().isoformat()  # the episode began before the split
+    # a holdout that starts after the first missing day cannot borrow the history
+    with pytest.raises(TrialLogError, match="do not join"):
+        span_periods(before, restrict(analysis, analysis.labels.index[16]))
+    with pytest.raises(TrialLogError, match="do not join"):
+        span_periods(before, restrict(analysis, analysis.labels.index[14]))
 
 
 def test_markdown_is_ascii_and_never_speaks_about_what_comes_next(

@@ -402,6 +402,32 @@ def test_the_report_answers_h1(finished: Path) -> None:
     assert all(isinstance(value, bool) for value in passes.values())
 
 
+def test_run_refuses_a_log_with_a_model_it_cannot_run_before_running_anything(
+    data: ExperimentData,
+    log: TrialLog,
+    tmp_path: Path,
+    data_hash: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The spec 1 runner must not spoil a descriptive registry by running what it can."""
+    setup = log.registrations()[SETUP_TRIAL]
+    foreign = TrialLog(tmp_path / "trials.jsonl")
+    foreign.register(SETUP_TRIAL, setup["hypothesis"], setup["config"], data_hash, COMMIT)
+    jump = {"model": "jump", "n_states": 2, "jump_penalty": 0.5}
+    foreign.register(jump_trial_id(2, 0.5), "h", jump, data_hash, COMMIT)
+    desc = {"model": "descriptive", "n_states": 3, "jump_penalty": 0.5}
+    foreign.register("desc_k3", "h", desc, data_hash, COMMIT)
+
+    def never(*args: object, **kwargs: object) -> None:
+        raise AssertionError("nothing may be evaluated")
+
+    monkeypatch.setattr("termo.core.evaluate_config", never)
+    monkeypatch.setattr("termo.core.inertia_labels", never)
+    with pytest.raises(TrialLogError, match="desc_k3"):
+        run_trials(data, foreign, tmp_path / "out", data_hash, COMMIT, echo=never)
+    assert foreign.results() == {} and not (tmp_path / "out").exists()
+
+
 def test_a_final_model_that_cannot_be_evaluated_does_not_burn_the_holdout(
     finished: Path, tmp_path: Path, snapshot_dir: Path, log: TrialLog, exp2_config: CoreConfig
 ) -> None:

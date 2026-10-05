@@ -59,6 +59,7 @@ BOUND_PACKAGES = ("numpy", "pandas", "scipy", "scikit-learn", "jumpmodels", "xgb
 MODEL_JUMP, MODEL_KMEANS, MODEL_INERTIA = "jump", "kmeans", "inertia"
 MODEL_KMEANS_FROZEN = "kmeans_frozen"
 FAMILIES = (MODEL_JUMP, MODEL_KMEANS_FROZEN)  # each has its own winner and criteria
+RUNNABLE_MODELS = frozenset({MODEL_JUMP, MODEL_KMEANS, MODEL_KMEANS_FROZEN, MODEL_INERTIA})
 HYPOTHESES = (
     "H1 (diagnostic, not a criterion): with rank features the refit K-means baselines pass "
     "the minimum median duration.",
@@ -284,13 +285,22 @@ def run_trials(
     code_commit: str,
     echo: Callable[[str], None] = print,
 ) -> None:
-    """Run every registered trial that has no result yet. Safe to re-run after an interruption."""
+    """Run every registered trial that has no result yet. Safe to re-run after an interruption.
+
+    A log that registers a model this stage cannot run belongs to another stage: nothing
+    is evaluated or recorded, so that registry is not spoiled by a partial run.
+    """
     config = data.config
     verify_binding(log, config, snapshot_hash, code_commit)
-    for trial_id, registration in log.registrations().items():
-        if trial_id == SETUP_TRIAL or log.has_result(trial_id):
-            continue
-        spec = registration["config"]
+    pending = {
+        trial_id: registration["config"]
+        for trial_id, registration in log.registrations().items()
+        if trial_id != SETUP_TRIAL and not log.has_result(trial_id)
+    }
+    foreign = [t for t, spec in pending.items() if spec.get("model") not in RUNNABLE_MODELS]
+    if foreign:
+        raise TrialLogError(f"registered models this stage cannot run: {foreign}")
+    for trial_id, spec in pending.items():
         labels_path = trials_dir / LABELS_DIR / f"{trial_id}.csv"
         if spec["model"] == MODEL_INERTIA:
             labels = inertia_labels(data.refits)

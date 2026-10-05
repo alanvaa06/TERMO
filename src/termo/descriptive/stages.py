@@ -34,7 +34,7 @@ from termo.experiment import effective_penalty
 from termo.regime.model import jump_fitter
 from termo.surrogate.explain import block_map, block_sums, explain, top_variables
 from termo.surrogate.model import SurrogateParams, surrogate_walk
-from termo.validation.trials import TrialLog, TrialLogError, TrialStatus
+from termo.validation.trials import RecordKind, TrialLog, TrialLogError, TrialStatus
 from termo.validation.walkforward import run_walkforward
 
 MODEL_DESCRIPTIVE = "descriptive"
@@ -137,21 +137,35 @@ def _csv_bytes(frame: pd.DataFrame) -> bytes:
     return text.encode("utf-8")
 
 
+def _labels_bytes(labels: pd.Series) -> bytes:
+    return _csv_bytes(labels.rename("label").to_frame())
+
+
+def labels_sha256(labels: pd.Series) -> str:
+    """The hash a label series has as labels.csv: comparable with what the log recorded."""
+    return hashlib.sha256(_labels_bytes(labels)).hexdigest()
+
+
 def analysis_bytes(analysis: Analysis) -> dict[str, bytes]:
     """The exact bytes of the five files, in memory: what is hashed is what is written."""
     proba = analysis.proba.rename(columns=lambda phase: f"p{phase}")
-    frames = {
-        "labels.csv": analysis.labels.rename("label").to_frame(),
-        "frozen_labels.csv": analysis.frozen_labels.rename("label").to_frame(),
-        "proba.csv": proba,
-        "shap_blocks.csv": analysis.shap_blocks,
-        "shap_top.csv": analysis.shap_top,
+    contents = {
+        "labels.csv": _labels_bytes(analysis.labels),
+        "frozen_labels.csv": _labels_bytes(analysis.frozen_labels),
+        "proba.csv": _csv_bytes(proba),
+        "shap_blocks.csv": _csv_bytes(analysis.shap_blocks),
+        "shap_top.csv": _csv_bytes(analysis.shap_top),
     }
-    return {name: _csv_bytes(frames[name]) for name in FILES}
+    return {name: contents[name] for name in FILES}
 
 
 def hashes_of(contents: Mapping[str, bytes]) -> dict[str, str]:
     return {name: hashlib.sha256(data).hexdigest() for name, data in contents.items()}
+
+
+def holdout_result(log: TrialLog) -> dict[str, Any] | None:
+    found = [r for r in log.records() if r["kind"] == RecordKind.HOLDOUT_RESULT.value]
+    return found[-1] if found else None
 
 
 def _write_bytes(path: Path, data: bytes) -> None:
@@ -373,6 +387,50 @@ def report_desc(
     return str(payload["verdict"])
 
 
+def _holdout_analysis(
+    config: CoreConfig, snapshot_dir: Path, columns: tuple[str, ...]
+) -> tuple[Analysis, pd.DataFrame]:
+    """Every output over the whole snapshot, holdout included, and the curve it came from.
+
+    D5 on the holdout needs a model fitted once on everything before it, so the frozen
+    cutoff moves to the holdout's eve. The online outputs do not depend on that cutoff.
+    """
+    frozen_through = replace(config, frozen_train_end=config.holdout_start - timedelta(days=1))
+    curve = load_curve(
+        snapshot_dir, config.series, config.start, config.holdout_start, final_evaluation=True
+    )
+    return analyse(prepare(curve, frozen_through, columns)), curve
+
+
+def _write_holdout(
+    contents: Mapping[str, bytes], payload: Mapping[str, Any], directory: Path, reports_dir: Path
+) -> None:
+    write_files(contents, directory)
+    write_report("holdout", "descriptive holdout", "holdout, clean data", payload, reports_dir)
+
+
+def _recover_holdout(
+    config: CoreConfig,
+    snapshot_dir: Path,
+    columns: tuple[str, ...],
+    logged: Mapping[str, Any],
+    directory: Path,
+    reports_dir: Path,
+) -> str:
+    """The files of a result the log already holds, rewritten from the same computation.
+
+    Nothing is logged. The files are written only when every recomputed hash is the one
+    the log recorded; files that already exist and match are rewritten with identical bytes.
+    """
+    whole, _ = _holdout_analysis(config, snapshot_dir, columns)
+    contents = analysis_bytes(restrict(whole, pd.Timestamp(config.holdout_start)))
+    if hashes_of(contents) != dict(logged["files"]):
+        raise TrialLogError("the recomputed holdout does not match the logged result")
+    payload = {k: v for k, v in logged.items() if k not in {"kind", "trial_id", "at"}}
+    _write_holdout(contents, payload, directory, reports_dir)
+    return str(logged["verdict"])
+
+
 def holdout_desc(
     config: CoreConfig,
     snapshot_dir: Path,
@@ -385,7 +443,8 @@ def holdout_desc(
 
     Everything that can fail by something knowable in advance is checked before the
     holdout is recorded as opened. Opened without a result means lost: that is the
-    policy the user chose.
+    policy the user chose. With a result already in the log, the stage only restores
+    its files, and only when it recomputes exactly what was logged.
     """
     _desc(config)
     report = log.last_report()
@@ -404,20 +463,28 @@ def holdout_desc(
         raise TrialLogError(
             f"the snapshot has {holdout_days} holdout days; at least {MIN_HOLDOUT_DAYS} are needed"
         )
-    # D5 on the holdout: a model fitted once on everything before it
-    frozen_through = replace(config, frozen_train_end=config.holdout_start - timedelta(days=1))
     found = disclosure(log)
     directory = trials_dir / HOLDOUT_DIR
     ensure_writable(
         [directory / name for name in FILES]
         + [reports_dir / "holdout.md", reports_dir / "holdout.json"]
     )
+    logged = holdout_result(log)
+    if logged is not None:
+        return _recover_holdout(config, snapshot_dir, columns, logged, directory, reports_dir)
 
     log.open_holdout(trial)  # recorded before any holdout row is used
-    curve = load_curve(
-        snapshot_dir, config.series, config.start, config.holdout_start, final_evaluation=True
-    )
-    analysis = restrict(analyse(prepare(curve, frozen_through, columns)), start)
+    whole, curve = _holdout_analysis(config, snapshot_dir, columns)
+    analysis = restrict(whole, start)
+    # the past of this computation must be the registered run; a holdout whose past differs
+    # from it is not accepted (knowable only after opening, so it is a guard, not a check)
+    past = labels_sha256(whole.labels.loc[whole.labels.index < start])
+    recorded = str(log.results()[trial]["metrics"]["files"]["labels.csv"])
+    if past != recorded:
+        raise TrialLogError(
+            "the recomputed pre-holdout labels differ from the registered run: "
+            "the holdout result is not accepted"
+        )
     checks = checks_of(analysis, curve, config)
     contents = analysis_bytes(analysis)
     payload = {
@@ -428,11 +495,11 @@ def holdout_desc(
         "days": int(len(analysis.labels)),
         "calibration": calibration(analysis.labels, analysis.proba, CALIBRATION_BINS),
         "files": hashes_of(contents),
+        "pre_holdout_labels_sha256": past,
         "limits": list(LIMITS),
         "disclosure": found,
     }
     # the verdict is in the log before any file is written: a late I/O error cannot lose it
     log.record_holdout_result(payload)
-    write_files(contents, directory)
-    write_report("holdout", "descriptive holdout", "holdout, clean data", payload, reports_dir)
+    _write_holdout(contents, payload, directory, reports_dir)
     return str(payload["verdict"])

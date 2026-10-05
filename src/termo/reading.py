@@ -7,6 +7,7 @@ never contains a number about what happened after its date.
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -15,8 +16,23 @@ import pandas as pd
 
 from termo.config import CoreConfig
 from termo.descriptive.stages import BASE, DISCLAIMER, Analysis
+from termo.validation.trials import TrialLogError
 
 DRIVERS = 3
+
+
+def span_periods(before: Analysis, after: Analysis) -> Analysis:
+    """The outputs of `after` with the phase history of `before` in front of its labels.
+
+    An episode that began before the holdout keeps its start and its length. The two
+    periods must join: `after` starts on the business day right after `before` ends.
+    """
+    last, first = before.labels.index[-1], after.labels.index[0]
+    if first != last + pd.offsets.BDay(1):
+        raise TrialLogError(
+            f"the two periods do not join: one ends {last.date()}, the other starts {first.date()}"
+        )
+    return replace(after, labels=pd.concat([before.labels, after.labels]))
 
 
 def build_reading(

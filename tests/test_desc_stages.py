@@ -4,14 +4,14 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import pytest
 
-from conftest import fake_fred
+from conftest import fake_fred, make_desc_config
 from termo.config import CoreConfig
 from termo.core import SETUP_TRIAL, registered_columns, take_snapshot
 from termo.data.loader import load_curve
@@ -26,6 +26,7 @@ from termo.descriptive.stages import (
     analyse,
     desc_trial_id,
     holdout_desc,
+    holdout_result,
     load_analysis,
     register_desc,
     report_desc,
@@ -37,9 +38,29 @@ from termo.validation.trials import TrialLog, TrialLogError
 COMMIT = "test-commit-3"
 
 
+def _sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
 @pytest.fixture(scope="module")
 def workspace(tmp_path_factory: pytest.TempPathFactory) -> Path:
     return tmp_path_factory.mktemp("termo-desc")
+
+
+@pytest.fixture(scope="module")
+def prior_log(workspace: Path) -> Path:
+    """A closed earlier registry: two trials and a no-go report, never to be written again."""
+    log = TrialLog(workspace / "prior" / "trials.jsonl")
+    log.register(SETUP_TRIAL, "setup", {}, "old-snapshot", "old-code")
+    log.register("jm_k2_lam5", "h", {"model": "jump", "n_states": 2, "jump_penalty": 5}, "s", "c")
+    log.register("inertia", "h", {"model": "inertia"}, "s", "c")
+    log.record_report({"verdict": "no-go", "final_trial_id": "jm_k2_lam5"})
+    return log.path
+
+
+@pytest.fixture(scope="module")
+def desc_config(prior_log: Path) -> CoreConfig:
+    return replace(make_desc_config(), prior_trial_logs=(prior_log.as_posix(),))
 
 
 @pytest.fixture(scope="module")
@@ -60,24 +81,35 @@ def trials_dir(workspace: Path) -> Path:
 
 
 @pytest.fixture(scope="module")
-def data(snapshot_dir: Path, log: TrialLog, desc_config: CoreConfig) -> ExperimentData:
+def data(
+    snapshot_dir: Path, log: TrialLog, desc_config: CoreConfig, prior_log: Path
+) -> ExperimentData:
+    before = _sha256(prior_log)
     curve = load_curve(
         snapshot_dir, desc_config.series, desc_config.start, desc_config.holdout_start
     )
     register_desc(desc_config, curve, log, snapshot_hash(snapshot_dir), COMMIT)
+    assert _sha256(prior_log) == before  # prior logs are read, never written
     return prepare(curve, desc_config, registered_columns(log))
 
 
 @pytest.fixture(scope="module")
 def finished(
-    workspace: Path, data: ExperimentData, log: TrialLog, trials_dir: Path, snapshot_dir: Path
+    workspace: Path,
+    data: ExperimentData,
+    log: TrialLog,
+    trials_dir: Path,
+    snapshot_dir: Path,
+    prior_log: Path,
 ) -> Path:
+    before = _sha256(prior_log)
     data_hash = snapshot_hash(snapshot_dir)
     messages: list[str] = []
     run_desc(data, log, trials_dir, data_hash, COMMIT, echo=messages.append)
     assert len(messages) == 1 and messages[0].isascii() and messages[0].startswith("[ok]")
     reports = workspace / "reports" / "desc"
     report_desc(data, log, trials_dir, reports, data_hash, COMMIT)
+    assert _sha256(prior_log) == before  # prior logs are read, never written
     return reports
 
 
@@ -95,6 +127,9 @@ def test_one_trial_is_registered_with_everything_it_is_bound_to(
     setup = registrations[SETUP_TRIAL]["config"]
     assert len(setup["columns"]) == 139 and "xgboost" in setup["environment"]
     assert setup["config"]["descriptive"]["fidelity_min"] == 0.8
+    assert setup["prior_trial_logs"] == [
+        {"path": desc_config.prior_trial_logs[0], "n_trials": 2, "verdict": "no-go"}
+    ]
     with pytest.raises(TrialLogError):
         register_desc(desc_config, data.curve, log, "x", COMMIT)
 
@@ -192,9 +227,11 @@ def test_report_recomputes_from_the_files_and_is_logged(
     assert payload["checks"] == log.results()["desc_k3"]["metrics"]["checks"]
     assert payload["final_trial_id"] == "desc_k3"
     assert payload["disclosure"]["n_trials_this_log"] == 1
+    assert payload["disclosure"]["n_trials_total"] == 3  # two in the prior log, one here
     markdown = (finished / "diagnostic.md").read_text(encoding="utf-8")
     assert markdown.isascii() and "does not anticipate" in markdown
     assert "D6_fidelity" in markdown and "pre-holdout" in markdown
+    assert "2 trials, verdict no-go" in markdown and "Total registered trials: 3" in markdown
 
 
 def test_report_refuses_tampered_files_and_a_changed_configuration(
@@ -365,18 +402,43 @@ def test_holdout_logs_the_result_before_writing_any_file(
     assert all(len(digest) == 64 for digest in logged["files"].values())
 
 
-def test_holdout_runs_once_on_holdout_days_only(
+@dataclass(frozen=True)
+class Opened:
+    """The holdout stage run once on a private copy of the finished log."""
+
+    log: TrialLog
+    trials: Path
+    reports: Path
+    result: str
+
+
+@pytest.fixture(scope="module")
+def opened(
     finished: Path,
-    tmp_path: Path,
+    tmp_path_factory: pytest.TempPathFactory,
+    snapshot_dir: Path,
+    log: TrialLog,
+    desc_config: CoreConfig,
+    prior_log: Path,
+) -> Opened:
+    root = tmp_path_factory.mktemp("termo-desc-holdout")
+    copy = _approved_copy(log, root)
+    before = _sha256(prior_log)
+    result = holdout_desc(
+        desc_config, snapshot_dir, copy, root / "trials", root / "reports", COMMIT
+    )
+    assert _sha256(prior_log) == before  # prior logs are read, never written
+    return Opened(copy, root / "trials", root / "reports", result)
+
+
+def test_holdout_runs_once_on_holdout_days_only(
+    opened: Opened,
     snapshot_dir: Path,
     log: TrialLog,
     desc_config: CoreConfig,
     curve: pd.DataFrame,
 ) -> None:
-    copy = _approved_copy(log, tmp_path)
-    private_trials, reports = tmp_path / "trials", tmp_path / "reports"
-    result = holdout_desc(desc_config, snapshot_dir, copy, private_trials, reports, COMMIT)
-
+    copy, private_trials, reports, result = opened.log, opened.trials, opened.reports, opened.result
     start = pd.Timestamp(desc_config.holdout_start)
     kinds = [r["kind"] for r in copy.records()]
     assert kinds[-2:] == ["holdout_opened", "holdout_result"]
@@ -385,8 +447,9 @@ def test_holdout_runs_once_on_holdout_days_only(
     assert logged["days"] == int((curve.index >= start).sum())
     assert set(logged["files"]) == set(FILES)
     for name, expected in logged["files"].items():
-        written = (private_trials / HOLDOUT_DIR / name).read_bytes()
-        assert hashlib.sha256(written).hexdigest() == expected
+        assert _sha256(private_trials / HOLDOUT_DIR / name) == expected
+    # the recomputed past is the registered run: same labels before the holdout, byte for byte
+    assert logged["pre_holdout_labels_sha256"] == log.results()["desc_k3"]["labels_sha256"]
     loaded = load_analysis(private_trials / HOLDOUT_DIR, logged["files"])
     assert loaded.labels.index[0] >= start and loaded.proba.index.equals(loaded.labels.index)
     # the frozen map of the holdout was fitted on everything before it, never on holdout days
@@ -414,6 +477,43 @@ def test_holdout_runs_once_on_holdout_days_only(
     assert frozen_before.frozen_train_end != desc_config.frozen_train_end
     payload = json.loads((reports / "holdout.json").read_text(encoding="utf-8"))
     assert payload["verdict"] == result and payload["stage"] == "holdout"
+    assert payload["pre_holdout_labels_sha256"] == logged["pre_holdout_labels_sha256"]
     assert (reports / "holdout.md").read_text(encoding="utf-8").isascii()
-    with pytest.raises(TrialLogError, match="already been opened"):
-        holdout_desc(desc_config, snapshot_dir, copy, private_trials, reports, COMMIT)
+    # a second call evaluates nothing new: the log is untouched and the verdict is the logged one
+    before = {path: _sha256(path) for path in (private_trials / HOLDOUT_DIR).iterdir()}
+    before[copy.path] = _sha256(copy.path)
+    assert holdout_desc(desc_config, snapshot_dir, copy, private_trials, reports, COMMIT) == result
+    assert {path: _sha256(path) for path in before} == before
+
+
+def test_holdout_files_are_restored_from_the_logged_result_only_when_they_match(
+    opened: Opened, snapshot_dir: Path, desc_config: CoreConfig, tmp_path: Path
+) -> None:
+    copy, private_trials, reports = opened.log, opened.trials, opened.reports
+    logged = holdout_result(copy)
+    assert logged is not None
+    log_before = copy.path.read_bytes()
+    for name in FILES:
+        (private_trials / HOLDOUT_DIR / name).unlink()
+    assert holdout_desc(desc_config, snapshot_dir, copy, private_trials, reports, COMMIT) == (
+        opened.result
+    )
+    for name, expected in logged["files"].items():
+        assert _sha256(private_trials / HOLDOUT_DIR / name) == expected
+    assert copy.path.read_bytes() == log_before
+    # a log whose recorded hashes the recomputation cannot reproduce gets no files at all
+    damaged = TrialLog(tmp_path / "trials.jsonl")
+    lines = [json.loads(line) for line in copy.path.read_text(encoding="utf-8").splitlines()]
+    lines[-1]["files"]["proba.csv"] = "0" * 64
+    damaged.path.write_text(
+        "".join(json.dumps(line, sort_keys=True) + "\n" for line in lines), encoding="utf-8"
+    )
+    with pytest.raises(TrialLogError, match="does not match the logged result"):
+        holdout_desc(
+            desc_config, snapshot_dir, damaged, tmp_path / "trials", tmp_path / "reports", COMMIT
+        )
+    assert not (tmp_path / "trials" / HOLDOUT_DIR / "labels.csv").exists()
+    assert not (tmp_path / "reports").exists() or not any((tmp_path / "reports").iterdir())
+    assert damaged.path.read_text(encoding="utf-8") == "".join(
+        json.dumps(line, sort_keys=True) + "\n" for line in lines
+    )

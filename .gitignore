@@ -31,3 +31,4 @@ data/cache/
 !data/snapshots/**/*.csv
 !trials/labels/*.csv
 !trials/**/labels/*.csv
+!trials/desc/**/*.csv
