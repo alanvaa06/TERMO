@@ -20,10 +20,11 @@ from termo.experiment import (
     separation_frame,
 )
 from termo.features.pipeline import FEATURE_NAMES
-from termo.regime.model import jump_fitter
+from termo.regime.model import jump_fitter, kmeans_fitter
 from termo.validation.metrics import (
     eta_squared,
     excess_eta_squared,
+    run_lengths,
     shift_excess_eta_squared,
     weekly_last,
 )
@@ -184,6 +185,12 @@ def test_the_jump_model_sees_the_effective_penalty(
     assert evaluation.jump_penalty_effective == pytest.approx(0.5 * 139)
     assert evaluation.metrics()["jump_penalty_effective"] == pytest.approx(69.5)
     assert jump.jump_penalty_effective == 50.0  # spec 1 configuration: absolute
+    # behaviour, not only the reported field: the labels are those of lambda = c * p
+    target = tyccles_data.daily_change_10y
+    scaled = run_walkforward(tyccles_data.refits, jump_fitter(2, 69.5), 2, target).oos_labels
+    unscaled = run_walkforward(tyccles_data.refits, jump_fitter(2, 0.5), 2, target).oos_labels
+    pd.testing.assert_series_equal(evaluation.oos_labels, scaled)
+    assert not evaluation.oos_labels.equals(unscaled)
 
 
 def test_frozen_engine_has_no_s1_and_uses_s2(
@@ -224,7 +231,23 @@ def test_holdout_evaluation_runs_the_frozen_engine(
     curve: pd.DataFrame, tyccles_config: CoreConfig
 ) -> None:
     full = prepare(curve, tyccles_config, recipe_for(tyccles_config).names)
-    result = holdout_evaluation(full, 2, None, frozen=True)
-    holdout_days = int((curve.index >= pd.Timestamp(tyccles_config.holdout_start)).sum())
-    assert 0 < result.n_weeks <= holdout_days // 5 + 1
-    assert result.passed == (result.excess_model >= result.excess_inertia)
+    result = holdout_evaluation(full, 3, None, frozen=True)
+
+    start = pd.Timestamp(tyccles_config.holdout_start)
+    walk = run_walkforward(full.frozen_refits, kmeans_fitter(3), 3, full.daily_change_10y)
+    labels = walk.oos_labels.loc[start:]
+    frame = separation_frame(labels, full.yields_10y, tyccles_config.horizon_short_days)
+    baseline = weekly_last(inertia_labels(full.frozen_refits)).reindex(frame.index)
+    values = frame["change"].to_numpy()
+    boot = tyccles_config.bootstrap
+    args = (boot.block_weeks, boot.n_resamples, boot.seed)
+    assert result.excess_model == pytest.approx(
+        excess_eta_squared(values, frame["label"].to_numpy().astype(int), *args)
+    )
+    assert result.excess_inertia == pytest.approx(
+        excess_eta_squared(values, baseline.to_numpy().astype(int), *args)
+    )
+    assert result.n_weeks == len(frame) > 0
+    assert result.n_episodes == len(run_lengths(labels.to_numpy()))
+    # the frozen model is not the refitted K-means: on this curve they read the holdout differently
+    assert result.n_episodes != holdout_evaluation(full, 3, None).n_episodes
