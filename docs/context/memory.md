@@ -23,3 +23,9 @@
 - # decision: linea base K-means con sklearn.KMeans (mismo objetivo que JM con multa 0; jumpmodels tarda ~84 s por ajuste con multa 0).
 - # decision: jumpmodels 0.1.1 verificado en Python 3.14 / numpy 2.5 / pandas 3.0 / sklearn 1.9; predict_online causal; ajuste K=5, T=12000 ~1 s.
 - # decision: flujo en 5 etapas CLI (snapshot, register, run, report, final-holdout); bitacora trials/trials.jsonl append-only; final-holdout corre una sola vez y requiere aprobacion del usuario.
+- # decision: experimento 2 = receta de datos TYCCLES (139 rangos causales de 126/252 dias sobre cambios suavizados a 21-189 dias de 7 plazos y 4 medidas de curva, mas vol 21d), sin regla de colinealidad, mismas pruebas y umbrales; registro aparte en trials/exp2 y reports/exp2.
+- # decision: la multa del JM se registra POR VARIABLE (lambda = c * p, c en {0.5..50}); con p=10 es la grilla de spec 1. Sin esto, 139 variables dejarian el mismo lambda 14 veces mas debil.
+- # decision: K-means congelado (ajuste unico hasta 1997-12-31, lee 1998 -> 2024-09) es familia aparte: estabilidad = S2 sola; cada familia tiene su ganador y su tabla; GO si una familia pasa; la elegida es la de mayor limite inferior de separacion.
+- # decision: las variables se calculan con una 'receta' intercambiable (PcaRecipe = spec 1, TycclesRecipe); los rangos se redondean a 6 decimales en pb antes de rankear para que movimientos iguales empaten.
+- # decision: potencia del criterio de separacion a 1,390 semanas (familia congelada): eta2 0.01 -> 8%, 0.02 -> 28%, 0.05 -> 83%. Un no-go de esa familia es evidencia debil.
+- # decision: --trials-dir y --reports-dir van juntos (uno solo se rechaza); cambiar codigo deja cerradas las etapas pendientes del registro de spec 1.
