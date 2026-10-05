@@ -29,3 +29,4 @@
 - # decision: las variables se calculan con una 'receta' intercambiable (PcaRecipe = spec 1, TycclesRecipe); los rangos se redondean a 6 decimales en pb antes de rankear para que movimientos iguales empaten.
 - # decision: potencia del criterio de separacion a 1,390 semanas (familia congelada): eta2 0.01 -> 8%, 0.02 -> 28%, 0.05 -> 83%. Un no-go de esa familia es evidencia debil.
 - # decision: --trials-dir y --reports-dir van juntos (uno solo se rechaza); cambiar codigo deja cerradas las etapas pendientes del registro de spec 1.
+- # decision: dos experimentos registrados (z-scores PCA y rangos TYCCLES) dan el mismo resultado: separacion maxima ~0.012-0.014 del movimiento a 4 semanas, no distinguible de la inercia; la receta de datos no era la causa. El usuario mantiene el holdout estricto (abierto sin resultado = perdido).
