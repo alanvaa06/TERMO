@@ -161,3 +161,47 @@ def test_descriptive_configuration_needs_one_model_and_a_name_per_phase() -> Non
         replace(config, descriptive=replace(config.descriptive, phase_names=("a", "b")))
     with pytest.raises(ValueError, match="frozen_train_end"):
         replace(config, frozen_train_end=None)
+
+
+def test_descriptive_series_must_exist_and_slope_legs_differ() -> None:
+    config = load_config(DESC_CONFIG)
+    assert config.descriptive is not None
+    for change in ({"level_series": "DGS1O"}, {"slope_short": "DGS20"}, {"slope_short": "DGS10"}):
+        with pytest.raises(ValueError, match="series of the curve"):
+            replace(config, descriptive=replace(config.descriptive, **change))
+    with pytest.raises(ValueError, match="different from each other"):
+        replace(config, descriptive=replace(config.descriptive, phase_names=("a", "a", "b")))
+
+
+def test_unknown_keys_in_the_descriptive_section_are_refused(tmp_path: Path) -> None:
+    text = DESC_CONFIG.read_text(encoding="utf-8")
+    for old, new in (
+        ("  change_days: 63", "  chnge_days: 63" + chr(10) + "  change_days: 63"),
+        ("    seed: 0", "    seed: 0" + chr(10) + "    tree_method: exact"),
+    ):
+        assert old in text
+        path = tmp_path / "typo.yaml"
+        path.write_text(text.replace(old, new), encoding="utf-8")
+        with pytest.raises(ValueError, match="unknown keys"):
+            load_config(path)
+
+
+def test_every_registered_variable_falls_in_exactly_one_block() -> None:
+    from collections import Counter
+
+    from termo.dataset import recipe_for
+    from termo.surrogate.explain import block_map
+
+    config = load_config(DESC_CONFIG)
+    assert config.descriptive is not None
+    mapping = block_map(recipe_for(config).names, config.descriptive.blocks)
+    assert Counter(mapping.values()) == {
+        "nivel corto": 36,
+        "nivel medio": 24,
+        "nivel largo": 24,
+        "pendientes": 36,
+        "curvatura": 12,
+        "volatilidad": 7,
+    }
+    assert config.descriptive.surrogate.subsample == 0.8
+    assert config.descriptive.surrogate.colsample_bytree == 0.8

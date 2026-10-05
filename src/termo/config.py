@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from datetime import date
 from pathlib import Path
 
@@ -132,12 +132,29 @@ class CoreConfig:
                 raise ValueError("sell, short-led and long-led phases must be three valid phases")
             if self.frozen_train_end is None:
                 raise ValueError("the descriptive tool needs frozen_train_end for criterion D5")
+            legs = {desc.level_series, desc.slope_long, desc.slope_short}
+            if not legs <= set(self.series) or desc.slope_long == desc.slope_short:
+                raise ValueError(
+                    "level and slope series must be series of the curve, slope legs distinct"
+                )
+            if len(set(desc.phase_names)) != len(desc.phase_names):
+                raise ValueError("phase names must be different from each other")
+
+
+def _only_known_keys(section: dict[str, object], kind: type, where: str) -> None:
+    """A misspelled or invented key would be dropped in silence and still be registered."""
+    unknown = sorted(set(section) - {f.name for f in fields(kind)})
+    if unknown:
+        raise ValueError(f"unknown keys in {where}: {unknown}")
 
 
 def load_config(path: Path) -> CoreConfig:
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
     tyccles = raw.get("tyccles")
     desc = raw.get("descriptive")
+    if desc is not None:
+        _only_known_keys(desc, DescriptiveConfig, "descriptive")
+        _only_known_keys(desc["surrogate"], SurrogateConfig, "descriptive.surrogate")
     return CoreConfig(
         series=tuple(raw["series"]),
         start=raw["start"],
