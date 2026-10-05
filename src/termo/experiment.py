@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 
 from termo.config import CoreConfig
-from termo.dataset import ExperimentData
+from termo.dataset import ExperimentData, recipe_for
 from termo.regime.model import RegimeFitter, jump_fitter, kmeans_fitter
 from termo.validation.bootstrap import (
     EtaDifference,
@@ -32,16 +32,18 @@ from termo.validation.metrics import (
 )
 from termo.validation.pbo import block_stats, pbo_cscv
 from termo.validation.stability import halves_ari, stability_score
-from termo.validation.walkforward import inertia_labels, run_walkforward
+from termo.validation.walkforward import RefitData, inertia_labels, run_walkforward
 
 
 @dataclass(frozen=True, eq=False)
 class ConfigEvaluation:
     n_states: int
-    jump_penalty: float | None  # None is the K-means baseline
+    jump_penalty: float | None  # None is K-means (the refit baseline or the frozen family)
+    jump_penalty_effective: float | None  # lambda as the jump model saw it
+    frozen: bool  # one K-means fit, never refitted: stability is S2 alone
     oos_labels: pd.Series
-    s1_mean: float
-    s1_min: float
+    s1_mean: float | None  # None for the frozen family: there are no refits
+    s1_min: float | None
     s2: float
     stability: float
     eta_short: float  # raw eta-squared of the forward 10Y change, short horizon
@@ -59,6 +61,8 @@ class ConfigEvaluation:
 
     def metrics(self) -> dict[str, Any]:
         return {
+            "jump_penalty_effective": self.jump_penalty_effective,
+            "frozen": self.frozen,
             "s1_mean": self.s1_mean,
             "s1_min": self.s1_min,
             "s2": self.s2,
@@ -133,27 +137,62 @@ def make_fitter(n_states: int, jump_penalty: float | None) -> RegimeFitter:
     return kmeans_fitter(n_states) if jump_penalty is None else jump_fitter(n_states, jump_penalty)
 
 
+def effective_penalty(config: CoreConfig, jump_penalty: float, n_features: int) -> float:
+    """Lambda as the jump model sees it. Per feature, the registered value is multiplied by p."""
+    return jump_penalty * n_features if config.jump_penalty_per_feature else jump_penalty
+
+
+def _engine(
+    data: ExperimentData, n_states: int, jump_penalty: float | None, frozen: bool
+) -> tuple[RegimeFitter, tuple[RefitData, ...], float | None]:
+    """Fitter, refits and effective penalty of one configuration."""
+    if frozen:
+        if jump_penalty is not None:
+            raise ValueError("the frozen family is K-means: no jump penalty")
+        if not data.frozen_refits:
+            raise ValueError("no frozen refit: set frozen_train_end in the configuration")
+        return kmeans_fitter(n_states), data.frozen_refits, None
+    penalty = (
+        None
+        if jump_penalty is None
+        else effective_penalty(data.config, jump_penalty, len(data.columns))
+    )
+    return make_fitter(n_states, penalty), data.refits, penalty
+
+
 def evaluate_config(
-    data: ExperimentData, n_states: int, jump_penalty: float | None
+    data: ExperimentData, n_states: int, jump_penalty: float | None, frozen: bool = False
 ) -> ConfigEvaluation:
     config = data.config
-    fitter = make_fitter(n_states, jump_penalty)
-    walk = run_walkforward(data.refits, fitter, n_states, data.daily_change_10y)
-    s2 = halves_ari(data.curve, data.columns, config.burn_in_days, fitter)
+    fitter, refits, penalty = _engine(data, n_states, jump_penalty, frozen)
+    walk = run_walkforward(refits, fitter, n_states, data.daily_change_10y)
+    s2 = halves_ari(
+        data.curve, data.columns, config.burn_in_days, fitter, recipe=recipe_for(config)
+    )
     durations = median_durations(walk.oos_labels.to_numpy(), n_states)
     minimum = config.thresholds.min_median_duration_days
     passes = all(not math.isnan(value) and value >= minimum for value in durations.values())
     fitted = fitter(data.full_features).insample_labels()
     short = separation(walk.oos_labels, data.yields_10y, config.horizon_short_days, config)
     long_ = separation(walk.oos_labels, data.yields_10y, config.horizon_long_days, config)
+    if frozen:
+        s1_mean: float | None = None
+        s1_min: float | None = None
+        stability = s2
+    else:
+        s1_mean = float(np.mean(walk.consecutive_ari))
+        s1_min = float(np.min(walk.consecutive_ari))
+        stability = stability_score(walk.consecutive_ari, s2)
     return ConfigEvaluation(
         n_states=n_states,
         jump_penalty=jump_penalty,
+        jump_penalty_effective=penalty,
+        frozen=frozen,
         oos_labels=walk.oos_labels,
-        s1_mean=float(np.mean(walk.consecutive_ari)),
-        s1_min=float(np.min(walk.consecutive_ari)),
+        s1_mean=s1_mean,
+        s1_min=s1_min,
         s2=s2,
-        stability=stability_score(walk.consecutive_ari, s2),
+        stability=stability,
         eta_short=short.raw,
         excess_short=short.excess,
         excess_long=long_.excess,
@@ -205,16 +244,17 @@ def pbo_of(labelings: Sequence[pd.Series], yields: pd.Series, config: CoreConfig
     return pbo_cscv(np.stack(stats))
 
 
-def holdout_evaluation(data: ExperimentData, n_states: int, jump_penalty: float) -> HoldoutResult:
+def holdout_evaluation(
+    data: ExperimentData, n_states: int, jump_penalty: float | None, frozen: bool = False
+) -> HoldoutResult:
     """`data` must come from a curve loaded with final_evaluation=True."""
     config = data.config
     start = pd.Timestamp(config.holdout_start)
-    walk = run_walkforward(
-        data.refits, jump_fitter(n_states, jump_penalty), n_states, data.daily_change_10y
-    )
+    fitter, refits, _ = _engine(data, n_states, jump_penalty, frozen)
+    walk = run_walkforward(refits, fitter, n_states, data.daily_change_10y)
     labels = walk.oos_labels.loc[start:]
     frame = separation_frame(labels, data.yields_10y, config.horizon_short_days)
-    baseline = weekly_last(inertia_labels(data.refits)).reindex(frame.index)
+    baseline = weekly_last(inertia_labels(refits)).reindex(frame.index)
     values = frame["change"].to_numpy()
     return HoldoutResult(
         excess_model=_excess(values, frame["label"].to_numpy().astype(int), config),

@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 
 import pandas as pd
 import pytest
 
 from termo.config import CoreConfig
-from termo.dataset import ExperimentData, prepare
+from termo.dataset import ExperimentData, prepare, recipe_for
 from termo.experiment import (
     ConfigEvaluation,
+    effective_penalty,
     evaluate_config,
     gate_tests,
     holdout_evaluation,
@@ -156,3 +158,73 @@ def test_holdout_is_judged_with_the_sign_flip_level(
     assert result.excess_model == excess_eta_squared(values, model, *draws)
     assert result.excess_inertia == excess_eta_squared(values, inertia, *draws)
     assert result.excess_model != shift_excess_eta_squared(values, model)
+
+
+@pytest.fixture(scope="module")
+def frozen(tyccles_data: ExperimentData) -> ConfigEvaluation:
+    return evaluate_config(tyccles_data, 2, None, frozen=True)
+
+
+def test_penalty_per_feature_scales_with_the_number_of_columns(
+    config: CoreConfig, tyccles_config: CoreConfig
+) -> None:
+    assert effective_penalty(config, 0.5, 139) == 0.5
+    assert effective_penalty(tyccles_config, 0.5, 139) == pytest.approx(69.5)
+    per_feature = replace(config, jump_penalty_per_feature=True)
+    grid = (0.5, 1.2, 3.0, 8.0, 20.0, 50.0)
+    assert [effective_penalty(per_feature, c, 10) for c in grid] == pytest.approx(
+        [5.0, 12.0, 30.0, 80.0, 200.0, 500.0]
+    )
+
+
+def test_the_jump_model_sees_the_effective_penalty(
+    tyccles_data: ExperimentData, jump: ConfigEvaluation
+) -> None:
+    evaluation = evaluate_config(tyccles_data, 2, 0.5)
+    assert evaluation.jump_penalty_effective == pytest.approx(0.5 * 139)
+    assert evaluation.metrics()["jump_penalty_effective"] == pytest.approx(69.5)
+    assert jump.jump_penalty_effective == 50.0  # spec 1 configuration: absolute
+
+
+def test_frozen_engine_has_no_s1_and_uses_s2(
+    frozen: ConfigEvaluation, tyccles_data: ExperimentData
+) -> None:
+    assert frozen.frozen and frozen.jump_penalty is None
+    assert frozen.s1_mean is None and frozen.s1_min is None
+    assert frozen.stability == frozen.s2
+    (refit,) = tyccles_data.frozen_refits
+    assert frozen.oos_labels.index[0] > refit.cutoff
+    assert frozen.oos_labels.index[-1] == tyccles_data.curve.index[-1]
+    metrics = frozen.metrics()
+    json.dumps(metrics)
+    assert metrics["s1_mean"] is None and metrics["frozen"] is True
+
+
+def test_frozen_labels_do_not_change_when_data_are_appended(
+    pre_holdout: pd.DataFrame, tyccles_config: CoreConfig
+) -> None:
+    columns = recipe_for(tyccles_config).names
+    shorter = prepare(pre_holdout.iloc[:-60], tyccles_config, columns)
+    longer = prepare(pre_holdout, tyccles_config, columns)
+    first = evaluate_config(shorter, 2, None, frozen=True).oos_labels
+    second = evaluate_config(longer, 2, None, frozen=True).oos_labels
+    pd.testing.assert_series_equal(first, second.loc[first.index])
+
+
+def test_frozen_engine_refuses_a_penalty_or_a_missing_refit(
+    tyccles_data: ExperimentData, data: ExperimentData
+) -> None:
+    with pytest.raises(ValueError, match="no jump penalty"):
+        evaluate_config(tyccles_data, 2, 3.0, frozen=True)
+    with pytest.raises(ValueError, match="frozen_train_end"):
+        evaluate_config(data, 2, None, frozen=True)
+
+
+def test_holdout_evaluation_runs_the_frozen_engine(
+    curve: pd.DataFrame, tyccles_config: CoreConfig
+) -> None:
+    full = prepare(curve, tyccles_config, recipe_for(tyccles_config).names)
+    result = holdout_evaluation(full, 2, None, frozen=True)
+    holdout_days = int((curve.index >= pd.Timestamp(tyccles_config.holdout_start)).sum())
+    assert 0 < result.n_weeks <= holdout_days // 5 + 1
+    assert result.passed == (result.excess_model >= result.excess_inertia)
