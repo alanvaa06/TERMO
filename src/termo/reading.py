@@ -19,7 +19,7 @@ import pandas as pd
 
 from termo.config import CoreConfig
 from termo.descriptive.criteria import APTO
-from termo.descriptive.stages import BASE, DISCLAIMER, Analysis
+from termo.descriptive.stages import BASE, DISCLAIMER, Analysis, phase_rows
 from termo.validation.trials import TrialLogError
 
 DRIVERS = 3
@@ -134,6 +134,9 @@ def render_reading(reading: dict[str, Any]) -> str:
     lines += ["", "Variables with the largest contribution:", ""]
     lines += [f"- {v['variable']}: {v['contribution']:+.2f}" for v in reading["top_variables"]]
     period, _ = governing(status)
+    registered = ", ".join(
+        f"{v['stage']} {str(v['verdict']).upper()}" for v in status["registered_verdicts"]
+    )
     lines += [
         "",
         "## Validation",
@@ -141,10 +144,18 @@ def render_reading(reading: dict[str, Any]) -> str:
         f"- Pre-holdout diagnostic: {str(status['diagnostic']).upper()}",
         f"- Holdout: {_holdout_text(status['holdout'])}",
         f"- Failed checks ({period}): {', '.join(status['failed_checks']) or 'none'}",
-        "",
-        reading["disclaimer"],
-        "",
+        f"- Registered verdicts: {registered}",
     ]
+    if "holdout_seen_by" in status:
+        lines.append(
+            f"- Holdout already seen by {status['holdout_seen_by']}: the only validation "
+            "of these names is the shadow period."
+        )
+    if status["by_phase"] is None:  # the governing report was logged before the table existed
+        lines.append("- By phase: not recorded by this registry")
+    else:
+        lines += ["", f"By phase ({period}):", "", *phase_rows(status["by_phase"], episodes=False)]
+    lines += ["", reading["disclaimer"], ""]
     made = reading["generated_with"]
     provenance = f"Generated with code {made['code_commit']}"
     if made["code_commit"] != made["registered_code_commit"]:

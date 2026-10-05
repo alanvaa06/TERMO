@@ -207,3 +207,27 @@ def make_desc_config() -> CoreConfig:
 @pytest.fixture(scope="session")
 def desc_config() -> CoreConfig:
     return make_desc_config()
+
+
+def make_desc2_config() -> CoreConfig:
+    """The post-holdout re-registration: names by direction, no curve-shape claim (no D4)."""
+    config = make_desc_config()
+    assert config.descriptive is not None
+    return replace(
+        config,
+        descriptive=replace(
+            config.descriptive,
+            phase_names=("rally fuerte", "rally moderado", "venta"),
+            short_led_phase=None,
+            long_led_phase=None,
+            slope_long=None,
+            slope_short=None,
+            holdout_already_seen=True,
+            holdout_seen_by="desc_k3 (test)",
+        ),
+    )
+
+
+@pytest.fixture(scope="session")
+def desc2_config() -> CoreConfig:
+    return make_desc2_config()

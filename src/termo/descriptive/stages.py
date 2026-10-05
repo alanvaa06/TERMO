@@ -29,7 +29,14 @@ from termo.core import (
 from termo.data.loader import load_curve, snapshot_days
 from termo.data.snapshot import snapshot_hash as hash_of_snapshot
 from termo.dataset import ExperimentData, first_window_columns, prepare, recipe_for
-from termo.descriptive.criteria import APTO, Check, calibration, evaluate, verdict
+from termo.descriptive.criteria import (
+    APTO,
+    Check,
+    calibration,
+    evaluate,
+    phase_table,
+    verdict,
+)
 from termo.experiment import effective_penalty
 from termo.regime.model import jump_fitter
 from termo.surrogate.explain import block_map, block_sums, explain, top_variables
@@ -54,6 +61,10 @@ LIMITS = (
     "SHAP explains the surrogate, not the market and not the jump model.",
     "Nothing here measures the ability to anticipate; that question is closed with NO-GO.",
 )
+NO_SHAPE_CLAIM_LIMIT = (
+    "Phase names describe direction and intensity only; no claim about the shape of the "
+    "curve is made or tested."
+)
 
 
 def desc_trial_id(config: CoreConfig) -> str:
@@ -64,6 +75,36 @@ def _desc(config: CoreConfig) -> DescriptiveConfig:
     if config.descriptive is None:
         raise TrialLogError("this configuration has no descriptive section")
     return config.descriptive
+
+
+def criteria_label(desc: DescriptiveConfig) -> str:
+    return "D1-D6" if desc.has_curve_shape_claim else "D1-D3, D5-D6"
+
+
+def already_seen_limit(seen_by: str) -> str:
+    return (
+        f"The holdout period was already examined by {seen_by}: these numbers are not "
+        "clean evidence; only shadow readings are."
+    )
+
+
+def limits_of(desc: DescriptiveConfig, holdout: bool) -> list[str]:
+    """What the report cannot prove: the fixed list, plus what this registry withdrew or
+    already saw."""
+    limits = list(LIMITS)
+    if not desc.has_curve_shape_claim:
+        limits[1] = limits[1].replace("D2-D4", "D2-D3")
+        limits.append(NO_SHAPE_CLAIM_LIMIT)
+    if holdout and desc.holdout_already_seen:
+        limits.append(already_seen_limit(desc.holdout_seen_by))
+    return limits
+
+
+def holdout_period(payload: Mapping[str, Any]) -> str:
+    """The period line of a holdout report: clean data, or data an earlier registry saw."""
+    if payload.get("holdout_already_seen"):
+        return f"holdout, data ALREADY SEEN by {payload['holdout_seen_by']}"
+    return "holdout, clean data"
 
 
 def surrogate_params(config: CoreConfig) -> SurrogateParams:
@@ -259,7 +300,8 @@ def register_desc(
             "environment": environment_fingerprint(),
             "hypotheses": [
                 "The 3-phase map chosen on pre-holdout data stays persistent, keeps the meaning "
-                "of its names and is imitated by the surrogate on the holdout (D1-D6)."
+                "of its names and is imitated by the surrogate on the holdout "
+                f"({criteria_label(desc)})."
             ],
             "prior_trial_logs": prior_log_summary(config),
         },
@@ -269,7 +311,7 @@ def register_desc(
     log.register(
         desc_trial_id(config),
         f"Descriptive tool: jump model with {config.k_values[0]} phases "
-        f"({', '.join(desc.phase_names)}), XGBoost surrogate, criteria D1-D6.",
+        f"({', '.join(desc.phase_names)}), XGBoost surrogate, criteria {criteria_label(desc)}.",
         {
             "model": MODEL_DESCRIPTIVE,
             "n_states": config.k_values[0],
@@ -331,6 +373,26 @@ def disclosure(log: TrialLog) -> dict[str, Any]:
     }
 
 
+def _cell(value: float | None, digits: int) -> str:
+    return "-" if value is None else f"{value:.{digits}f}"
+
+
+def phase_rows(by_phase: Iterable[Mapping[str, Any]], episodes: bool = True) -> list[str]:
+    """The per-phase table as Markdown lines (shared with the weekly reading)."""
+    head = "| Phase | Days | Evaluable | Median duration (days) | Direction share | Recall |"
+    lines = [head + " Episodes |" if episodes else head, "|---|---|---|---|---|---|---|"]
+    if not episodes:
+        lines[1] = "|---|---|---|---|---|---|"
+    for row in by_phase:
+        line = (
+            f"| {row['name']} | {row['days']} | {'yes' if row['evaluable'] else 'no'} "
+            f"| {_cell(row['median_duration_days'], 1)} | {_cell(row['direction_share'], 2)} "
+            f"| {_cell(row['recall'], 2)} |"
+        )
+        lines.append(f"{line} {row['episodes']} |" if episodes else line)
+    return lines
+
+
 def render(title: str, period: str, payload: Mapping[str, Any]) -> str:
     """ASCII Markdown of a diagnostic or holdout report."""
     lines = [
@@ -347,8 +409,11 @@ def render(title: str, period: str, payload: Mapping[str, Any]) -> str:
         value = "-" if check["value"] is None else f"{check['value']:.4f}"
         result = {True: "pass", False: "FAIL", None: "not evaluable"}[check["passed"]]
         lines.append(f"| {check['name']} | {value} | {check['requirement']} | {result} |")
-    lines += ["", f"Days evaluated: {payload['days']}", "", "## What these checks do not prove", ""]
-    lines += [f"- {limit}" for limit in LIMITS]
+    lines += ["", f"Days evaluated: {payload['days']}"]
+    if "by_phase" in payload:  # a result logged before the table existed has none to show
+        lines += ["", "## By phase", "", *phase_rows(payload["by_phase"])]
+    lines += ["", "## What these checks do not prove", ""]
+    lines += [f"- {limit}" for limit in payload["limits"]]
     found = payload["disclosure"]
     lines += ["", "## Disclosure", "", f"- Trials in this log: {found['n_trials_this_log']}"]
     lines += [
@@ -391,9 +456,10 @@ def report_desc(
         "verdict": verdict(checks),
         "final_trial_id": trial,
         "checks": [asdict(c) for c in checks],
+        "by_phase": phase_table(analysis.labels, data.curve, analysis.proba, config),
         "days": int(len(analysis.labels)),
         "calibration": recorded["calibration"],
-        "limits": list(LIMITS),
+        "limits": limits_of(_desc(config), holdout=False),
         "disclosure": disclosure(log),
     }
     log.record_report({**payload, "snapshot_hash": snapshot_hash, "code_commit": code_commit})
@@ -422,7 +488,7 @@ def _write_holdout(
     contents: Mapping[str, bytes], payload: Mapping[str, Any], directory: Path, reports_dir: Path
 ) -> None:
     write_files(contents, directory)
-    write_report("holdout", "descriptive holdout", "holdout, clean data", payload, reports_dir)
+    write_report("holdout", "descriptive holdout", holdout_period(payload), payload, reports_dir)
 
 
 def _recover_holdout(
@@ -503,18 +569,23 @@ def holdout_desc(
         )
     checks = checks_of(analysis, curve, config)
     contents = analysis_bytes(analysis)
-    payload = {
+    desc = _desc(config)
+    payload: dict[str, Any] = {
         "stage": "holdout",
         "verdict": verdict(checks),
         "final_trial_id": trial,
         "checks": [asdict(c) for c in checks],
+        "by_phase": phase_table(analysis.labels, curve, analysis.proba, config),
         "days": int(len(analysis.labels)),
         "calibration": calibration(analysis.labels, analysis.proba, CALIBRATION_BINS),
         "files": hashes_of(contents),
         "pre_holdout_labels_sha256": past,
-        "limits": list(LIMITS),
+        "limits": limits_of(desc, holdout=True),
         "disclosure": found,
     }
+    if desc.holdout_already_seen:  # this registry's bookkeeping; the numbers were seen before
+        payload["holdout_already_seen"] = True
+        payload["holdout_seen_by"] = desc.holdout_seen_by
     # the verdict is in the log before any file is written: a late I/O error cannot lose it
     log.record_holdout_result(payload)
     _write_holdout(contents, payload, directory, reports_dir)

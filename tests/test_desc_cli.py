@@ -143,8 +143,23 @@ def test_stages_and_reading_through_the_command_line(
         "holdout": None,
         "failed_checks": failed,
         "fidelity_failed": "D6_fidelity" in failed,
+        "by_phase": report["by_phase"],
+        "registered_verdicts": [{"stage": "diagnostic", "verdict": NO_APTO}],
     }
+    assert "holdout_seen_by" not in reading["validation"]  # this registry saw nothing before
     assert reading["drivers_validated"] is ("D6_fidelity" not in failed)
+    rows = report["by_phase"]
+    assert [r["name"] for r in rows] == [
+        "rally de la parte corta",
+        "rally de la parte larga",
+        "venta",
+    ]
+    assert "By phase (pre-holdout diagnostic):" in markdown
+    assert "| Phase | Days | Evaluable | Median duration (days) | Direction share | Recall |" in (
+        markdown
+    )
+    assert f"| venta | {rows[2]['days']} |" in markdown
+    assert "- Registered verdicts: diagnostic NO-APTO" in markdown
     # the sheet is produced anyway, and says before anything else that it is not validated
     banner = _banner("pre-holdout diagnostic", report)
     assert markdown.splitlines()[2] == banner and "NO-APTO" in banner
@@ -279,10 +294,18 @@ def test_a_holdout_reading_counts_the_episode_from_before_the_holdout(private: P
         "holdout": verdict,
         "failed_checks": failed_checks(holdout),
         "fidelity_failed": "D6_fidelity" in failed_checks(holdout),
+        "by_phase": holdout["by_phase"],
+        "registered_verdicts": [
+            {"stage": "diagnostic", "verdict": APTO},
+            {"stage": "holdout", "verdict": verdict},
+        ],
     }
     markdown = _markdown(first.date().isoformat())
     assert "- Pre-holdout diagnostic: APTO" in markdown
     assert f"- Holdout: {verdict.upper()}" in markdown
+    assert f"- Registered verdicts: diagnostic APTO, holdout {verdict.upper()}" in markdown
+    assert "By phase (holdout):" in markdown and markdown.isascii()
+    assert sum(r["days"] for r in holdout["by_phase"]) == holdout["days"]
     if verdict == APTO:
         assert "NOT VALIDATED" not in markdown
     else:  # the holdout governs the banner once it has a result

@@ -206,6 +206,48 @@ def test_work_is_bound_to_what_was_registered(
     verify_binding(log, config, data_hash, COMMIT)  # the registered combination passes
 
 
+def test_a_registration_that_predates_an_optional_key_reads_it_as_its_default(
+    tmp_path: Path,
+) -> None:
+    """Later code may add optional keys; an earlier registry must still bind to its own
+    configuration, and a value other than the default must still be refused."""
+    from conftest import make_desc_config
+
+    desc = make_desc_config()
+    assert desc.descriptive is not None
+    fingerprint = config_fingerprint(desc)
+    assert fingerprint["descriptive"]["holdout_already_seen"] is False
+    del fingerprint["descriptive"]["holdout_already_seen"]
+    del fingerprint["descriptive"]["holdout_seen_by"]
+    del fingerprint["prior_trial_logs"]  # top-level optional key, at its default
+    older = TrialLog(tmp_path / "trials.jsonl")
+    older.register(
+        SETUP_TRIAL,
+        "setup",
+        {"config": fingerprint, "environment": environment_fingerprint()},
+        "hash",
+        COMMIT,
+    )
+    verify_binding(older, desc, "hash", COMMIT)
+    seen = replace(desc, descriptive=replace(desc.descriptive, holdout_already_seen=True))
+    with pytest.raises(TrialLogError, match="configuration"):
+        verify_binding(older, seen, "hash", COMMIT)
+    with pytest.raises(TrialLogError, match="configuration"):
+        verify_binding(older, replace(desc, prior_trial_logs=("a.jsonl",)), "hash", COMMIT)
+    # a required key the registration lacks is a difference, never filled in
+    del fingerprint["refit_weeks"]
+    lacking = TrialLog(tmp_path / "lacking.jsonl")
+    lacking.register(
+        SETUP_TRIAL,
+        "setup",
+        {"config": fingerprint, "environment": environment_fingerprint()},
+        "hash",
+        COMMIT,
+    )
+    with pytest.raises(TrialLogError, match="configuration"):
+        verify_binding(lacking, desc, "hash", COMMIT)
+
+
 def test_run_and_report_refuse_another_configuration(
     finished: Path,
     workspace: Path,

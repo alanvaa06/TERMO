@@ -6,7 +6,7 @@ import hashlib
 import json
 import platform
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import asdict, dataclass
+from dataclasses import MISSING, asdict, dataclass, fields, is_dataclass
 from datetime import date
 from importlib import metadata
 from pathlib import Path
@@ -103,20 +103,39 @@ def frozen_trial_id(n_states: int) -> str:
     return f"kmf_k{n_states}"
 
 
+def _plain(value: Any) -> Any:
+    if isinstance(value, date):
+        return value.isoformat()
+    if isinstance(value, (list, tuple)):
+        return [_plain(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _plain(item) for key, item in value.items()}
+    return value
+
+
 def config_fingerprint(config: CoreConfig) -> dict[str, Any]:
     """The whole configuration in JSON form: what a registration is bound to."""
-
-    def plain(value: Any) -> Any:
-        if isinstance(value, date):
-            return value.isoformat()
-        if isinstance(value, (list, tuple)):
-            return [plain(item) for item in value]
-        if isinstance(value, dict):
-            return {key: plain(item) for key, item in value.items()}
-        return value
-
-    fingerprint: dict[str, Any] = plain(asdict(config))
+    fingerprint: dict[str, Any] = _plain(asdict(config))
     return fingerprint
+
+
+def _with_later_defaults(registered: Any, current: Any) -> Any:
+    """A registered fingerprint read with the optional keys later code added.
+
+    A key the registration predates is read as its default, so an earlier registry
+    still binds to its own configuration; a required key it lacks stays missing.
+    """
+    if not (is_dataclass(current) and isinstance(registered, dict)):
+        return registered
+    filled: dict[str, Any] = {}
+    for field in fields(current):
+        if field.name in registered:
+            filled[field.name] = _with_later_defaults(
+                registered[field.name], getattr(current, field.name)
+            )
+        elif field.default is not MISSING:
+            filled[field.name] = _plain(field.default)
+    return filled
 
 
 def environment_fingerprint() -> dict[str, str]:
@@ -244,8 +263,9 @@ def _refuse_changes(bound: Iterable[tuple[str, Any, Any]]) -> None:
 def _data_binding(
     setup: Mapping[str, Any], config: CoreConfig, snapshot_hash: str
 ) -> list[tuple[str, Any, Any]]:
+    registered = _with_later_defaults(setup["config"]["config"], config)
     return [
-        ("configuration", setup["config"]["config"], config_fingerprint(config)),
+        ("configuration", registered, config_fingerprint(config)),
         ("data snapshot", setup["snapshot_hash"], snapshot_hash),
     ]
 

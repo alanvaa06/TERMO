@@ -26,11 +26,45 @@ from termo.reading import (
 from termo.validation.trials import TrialLogError
 
 BLOCKS = ["nivel corto", "nivel medio", "nivel largo", "pendientes", "curvatura", "volatilidad"]
+BY_PHASE: list[dict[str, object]] = [
+    {
+        "phase": 0,
+        "name": "rally de la parte corta",
+        "days": 19,
+        "evaluable": False,
+        "median_duration_days": 19.0,
+        "direction_share": 0.8947,
+        "recall": 0.5263,
+        "episodes": 1,
+    },
+    {
+        "phase": 1,
+        "name": "rally de la parte larga",
+        "days": 310,
+        "evaluable": True,
+        "median_duration_days": 155.0,
+        "direction_share": 0.7129,
+        "recall": 0.9871,
+        "episodes": 2,
+    },
+    {
+        "phase": 2,
+        "name": "venta",
+        "days": 0,
+        "evaluable": False,
+        "median_duration_days": None,
+        "direction_share": None,
+        "recall": None,
+        "episodes": 0,
+    },
+]
 STATUS: dict[str, object] = {
     "diagnostic": APTO,
     "holdout": None,
     "failed_checks": [],
     "fidelity_failed": False,
+    "by_phase": BY_PHASE,
+    "registered_verdicts": [{"stage": "diagnostic", "verdict": APTO}],
 }
 GENERATED: dict[str, object] = {
     "code_commit": "code-3",
@@ -260,6 +294,69 @@ def test_a_lost_holdout_leaves_the_diagnostic_governing_and_stays_visible(
     assert f"- Holdout: {LOST_HOLDOUT}" in lost
     fine = render_reading(_build(analysis, day, desc_config, holdout=LOST_HOLDOUT))
     assert "NOT VALIDATED" not in fine and f"- Holdout: {LOST_HOLDOUT}" in fine
+
+
+def test_the_validation_section_shows_every_phase_and_the_registered_verdicts(
+    desc_config: CoreConfig,
+) -> None:
+    analysis = _analysis()
+    day = analysis.labels.index[20].date()
+    text = render_reading(_build(analysis, day, desc_config))
+    assert text.isascii()
+    section = text.split("## Validation")[1].split(DISCLAIMER)[0]
+    assert "| Phase | Days | Evaluable | Median duration (days) | Direction share | Recall |" in (
+        section
+    )
+    assert "| rally de la parte corta | 19 | no | 19.0 | 0.89 | 0.53 |" in section
+    assert "| rally de la parte larga | 310 | yes | 155.0 | 0.71 | 0.99 |" in section
+    assert "| venta | 0 | no | - | - | - |" in section
+    assert "- Registered verdicts: diagnostic APTO" in section
+    assert "already seen" not in text.lower()
+    both = render_reading(
+        _build(
+            analysis,
+            day,
+            desc_config,
+            holdout=NO_APTO,
+            failed_checks=["D4_long_led_flattens"],
+            registered_verdicts=[
+                {"stage": "diagnostic", "verdict": APTO},
+                {"stage": "holdout", "verdict": NO_APTO},
+            ],
+        )
+    )
+    assert "- Registered verdicts: diagnostic APTO, holdout NO-APTO" in both
+    # a registry whose governing report predates the table says so instead of a table
+    none = render_reading(_build(analysis, day, desc_config, by_phase=None))
+    assert "| Phase | Days |" not in none and "- By phase: not recorded by this registry" in none
+
+
+def test_a_holdout_already_seen_is_said_in_the_validation_section(
+    desc2_config: CoreConfig,
+) -> None:
+    analysis = _analysis()
+    day = analysis.labels.index[20].date()
+    reading = _build(
+        analysis,
+        day,
+        desc2_config,
+        holdout=APTO,
+        holdout_seen_by="desc_k3 (test)",
+        registered_verdicts=[
+            {"stage": "diagnostic", "verdict": APTO},
+            {"stage": "holdout", "verdict": APTO},
+        ],
+    )
+    assert reading["phase_name"] == "rally fuerte"
+    assert reading["validation"]["holdout_seen_by"] == "desc_k3 (test)"
+    text = render_reading(reading)
+    assert text.isascii() and "NOT VALIDATED" not in text  # the banner follows the verdict only
+    line = (
+        "- Holdout already seen by desc_k3 (test): the only validation of these names is "
+        "the shadow period."
+    )
+    assert line in text.split("## Validation")[1]
+    assert text.index("- Holdout: APTO") < text.index(line) < text.index(DISCLAIMER)
 
 
 def test_the_reading_records_the_code_that_formatted_it(desc_config: CoreConfig) -> None:

@@ -9,7 +9,15 @@ import pandas as pd
 import pytest
 
 from termo.config import CoreConfig
-from termo.descriptive.criteria import APTO, NO_APTO, calibration, evaluate, verdict
+from termo.descriptive.criteria import (
+    APTO,
+    NO_APTO,
+    PHASE_CHECKS,
+    calibration,
+    evaluate,
+    phase_table,
+    verdict,
+)
 
 DAYS = 600
 
@@ -163,6 +171,101 @@ def test_fidelity_ignores_a_phase_with_too_few_days(desc_config: CoreConfig) -> 
     failing = evaluate(labels, curve, many, frozen, desc_config)
     assert _by_name(failing, "D6_fidelity").value == pytest.approx(2 / 3)
     assert _by_name(failing, "D6_fidelity").passed is False
+
+
+def test_without_the_curve_shape_claim_there_is_no_d4(
+    desc_config: CoreConfig, desc2_config: CoreConfig
+) -> None:
+    labels, curve, proba, frozen = _case()
+    assert desc2_config.descriptive is not None
+    assert not desc2_config.descriptive.has_curve_shape_claim
+    checks = evaluate(labels, curve, proba, frozen, desc2_config)
+    assert [c.name for c in checks] == [
+        "D1_persistence",
+        "D2_sell_coherence",
+        "D3_rally_coherence",
+        "D5_map_stable",
+        "D6_fidelity",
+    ]
+    assert all(c.passed is True for c in checks) and verdict(checks) == APTO
+    # the same map with the two rallies exchanged: nothing about the slope is tested
+    swapped = labels.replace({0: 1, 1: 0})
+    exchanged = evaluate(
+        swapped, curve, proba.rename(columns={0: 1, 1: 0})[[0, 1, 2]], swapped, desc2_config
+    )
+    assert verdict(exchanged) == APTO
+    with_claim = evaluate(
+        swapped, curve, proba.rename(columns={0: 1, 1: 0})[[0, 1, 2]], swapped, desc_config
+    )
+    assert verdict(with_claim) == NO_APTO  # the configuration with the claim is unchanged
+    assert len(with_claim) == 7 and {"D4_short_led_steepens", "D4_long_led_flattens"} <= set(
+        PHASE_CHECKS
+    )
+    # a slope leg missing from the curve is no longer needed
+    only_level = curve[["DGS10"]]
+    assert verdict(evaluate(labels, only_level, proba, frozen, desc2_config)) == APTO
+    # no evaluable phase is still not a pass
+    short = pd.Index(np.r_[labels.index[:30], labels.index[200:230], labels.index[400:430]])
+    few = evaluate(labels.loc[short], curve, proba.loc[short], frozen.loc[short], desc2_config)
+    assert verdict(few) == NO_APTO
+
+
+@pytest.mark.parametrize("fixture", ["desc_config", "desc2_config"])
+def test_phase_table_describes_every_phase(fixture: str, request: pytest.FixtureRequest) -> None:
+    config: CoreConfig = request.getfixturevalue(fixture)
+    assert config.descriptive is not None
+    labels, curve, proba, _ = _case()
+    keep = labels.index[:430]  # 200 sell, 200 of phase 1, 30 of phase 0 (< 40: not evaluable)
+    few = proba.loc[keep].copy()
+    few.iloc[-3:] = [0.05, 0.9, 0.05]  # the surrogate misses three days of phase 0
+    rows = phase_table(labels.loc[keep], curve, few, config)
+    assert [r["phase"] for r in rows] == [0, 1, 2]
+    assert [r["name"] for r in rows] == list(config.descriptive.phase_names)
+    assert set(rows[0]) == {
+        "phase",
+        "name",
+        "days",
+        "evaluable",
+        "median_duration_days",
+        "direction_share",
+        "recall",
+        "episodes",
+    }
+    assert [r["days"] for r in rows] == [30, 200, 200]
+    assert [r["evaluable"] for r in rows] == [False, True, True]
+    assert [r["median_duration_days"] for r in rows] == [30.0, 200.0, 200.0]
+    assert [r["episodes"] for r in rows] == [1, 1, 1]
+    # direction over the past 63 days: the sell phase rises every day (its lead-in rises
+    # too); the first 31 days of phase 1 still carry the sell phase's rise in the window
+    assert [r["direction_share"] for r in rows] == [1.0, 169 / 200, 1.0]
+    assert rows[1]["direction_share"] == pytest.approx(
+        float((curve["DGS10"].diff(63).reindex(keep)[labels.loc[keep] == 1] < 0).mean())
+    )
+    assert rows[0]["recall"] == pytest.approx(27 / 30) and rows[1]["recall"] == 1.0
+    assert rows[2]["recall"] == 1.0
+    assert all(isinstance(r["days"], int) and isinstance(r["episodes"], int) for r in rows)
+    # a phase that never appears is still a row, with nothing to say about it
+    absent = phase_table(labels.loc[keep[:400]], curve, few.loc[keep[:400]], config)
+    assert absent[0] == {
+        "phase": 0,
+        "name": config.descriptive.phase_names[0],
+        "days": 0,
+        "evaluable": False,
+        "median_duration_days": None,
+        "direction_share": None,
+        "recall": None,
+        "episodes": 0,
+    }
+    # a rising 10Y during a rally is counted against the rally's direction
+    rising = curve.copy()
+    rising["DGS10"] = 20.0 + 0.02 * np.arange(len(rising))
+    against = phase_table(labels.loc[keep], rising, few, config)
+    assert [r["direction_share"] for r in against] == [0.0, 0.0, 1.0]
+    # two episodes of the sell phase
+    two = labels.loc[keep].copy()
+    two.iloc[300:310] = 2
+    assert phase_table(two, curve, few, config)[2]["episodes"] == 2
+    assert phase_table(two, curve, few, config)[2]["median_duration_days"] == 105.0
 
 
 def test_fidelity_is_not_evaluable_without_an_evaluable_phase(desc_config: CoreConfig) -> None:

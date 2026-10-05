@@ -186,6 +186,87 @@ def test_unknown_keys_in_the_descriptive_section_are_refused(tmp_path: Path) -> 
             load_config(path)
 
 
+DESC2_CONFIG = Path(__file__).resolve().parents[1] / "configs" / "desc2.yaml"
+
+
+def test_loads_the_post_holdout_re_registration() -> None:
+    config = load_config(DESC2_CONFIG)
+    desc = config.descriptive
+    assert desc is not None
+    assert desc.phase_names == ("rally fuerte", "rally moderado", "venta")
+    assert desc.sell_phase == 2 and desc.level_series == "DGS10"
+    assert desc.has_curve_shape_claim is False
+    assert (desc.short_led_phase, desc.long_led_phase) == (None, None)
+    assert (desc.slope_long, desc.slope_short) == (None, None)
+    assert desc.holdout_already_seen is True
+    assert desc.holdout_seen_by == (
+        "desc_k3 (trials/desc), opened 2026-10-05, verdict no-apto by D4 only"
+    )
+    assert config.prior_trial_logs == (
+        "trials/trials.jsonl",
+        "trials/exp2/trials.jsonl",
+        "trials/desc/trials.jsonl",
+    )
+    text = DESC2_CONFIG.read_text(encoding="utf-8").lower()
+    assert "section 9" in text and "after seeing the holdout" in text and text.isascii()
+
+
+def test_desc2_differs_from_desc_only_in_names_claim_and_holdout_bookkeeping() -> None:
+    base, config = load_config(DESC_CONFIG), load_config(DESC2_CONFIG)
+    assert base.descriptive is not None and config.descriptive is not None
+    assert base.descriptive.has_curve_shape_claim and base.descriptive.holdout_already_seen is False
+    aligned = replace(
+        config,
+        prior_trial_logs=base.prior_trial_logs,
+        descriptive=replace(
+            config.descriptive,
+            phase_names=base.descriptive.phase_names,
+            short_led_phase=base.descriptive.short_led_phase,
+            long_led_phase=base.descriptive.long_led_phase,
+            slope_long=base.descriptive.slope_long,
+            slope_short=base.descriptive.slope_short,
+            holdout_already_seen=base.descriptive.holdout_already_seen,
+            holdout_seen_by=base.descriptive.holdout_seen_by,
+        ),
+    )
+    assert aligned == base
+
+
+def test_the_curve_shape_claim_is_all_four_fields_or_none() -> None:
+    config = load_config(DESC_CONFIG)
+    assert config.descriptive is not None
+    whole: dict[str, None] = {
+        "short_led_phase": None,
+        "long_led_phase": None,
+        "slope_long": None,
+        "slope_short": None,
+    }
+    without = replace(config.descriptive, **whole)
+    assert replace(config, descriptive=without).descriptive is not None
+    for partial in (
+        {"slope_short": None},
+        {"short_led_phase": None},
+        {"short_led_phase": None, "long_led_phase": None, "slope_long": None},
+    ):
+        with pytest.raises(ValueError, match="all four or none"):
+            replace(config, descriptive=replace(config.descriptive, **partial))
+    # without the claim the sell phase and the level series are still checked
+    with pytest.raises(ValueError, match="sell phase"):
+        replace(config, descriptive=replace(without, sell_phase=3))
+    with pytest.raises(ValueError, match="series of the curve"):
+        replace(config, descriptive=replace(without, level_series="DGS1O"))
+
+
+def test_unknown_keys_in_desc2_are_refused(tmp_path: Path) -> None:
+    text = DESC2_CONFIG.read_text(encoding="utf-8")
+    old = "  holdout_already_seen: true"
+    assert old in text
+    path = tmp_path / "typo.yaml"
+    path.write_text(text.replace(old, old + chr(10) + "  holdout_seen: true"), encoding="utf-8")
+    with pytest.raises(ValueError, match="unknown keys"):
+        load_config(path)
+
+
 def test_every_registered_variable_falls_in_exactly_one_block() -> None:
     from collections import Counter
 

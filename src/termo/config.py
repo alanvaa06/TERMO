@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, fields
 from datetime import date
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -60,11 +62,7 @@ class DescriptiveConfig:
 
     phase_names: tuple[str, ...]
     sell_phase: int
-    short_led_phase: int  # the rally led by the short end: the curve steepens
-    long_led_phase: int  # the rally led by the long end: the curve flattens
     level_series: str
-    slope_long: str
-    slope_short: str
     change_days: int  # contemporaneous changes are taken over the PAST this many days
     coherence_share_min: float
     min_days_evaluable: int
@@ -73,6 +71,20 @@ class DescriptiveConfig:
     low_confidence_below: float
     surrogate: SurrogateConfig
     blocks: tuple[tuple[str, tuple[str, ...]], ...]  # (block, first tokens of its variables)
+    # The curve-shape claim (criterion D4): all four together, or none of them. Without
+    # it the names describe direction and intensity only.
+    short_led_phase: int | None = None  # the rally led by the short end: the curve steepens
+    long_led_phase: int | None = None  # the rally led by the long end: the curve flattens
+    slope_long: str | None = None
+    slope_short: str | None = None
+    # Bookkeeping of a registry opened after the holdout was examined by an earlier one:
+    # its holdout numbers are not clean evidence and every report says so.
+    holdout_already_seen: bool = False
+    holdout_seen_by: str = ""  # free text, e.g. "desc_k3, opened 2026-10-05"
+
+    @property
+    def has_curve_shape_claim(self) -> bool:
+        return self.short_led_phase is not None
 
 
 @dataclass(frozen=True)
@@ -127,18 +139,31 @@ class CoreConfig:
                 raise ValueError("the descriptive tool is one model: one K and one jump penalty")
             if len(desc.phase_names) != self.k_values[0]:
                 raise ValueError("the descriptive tool needs one name per phase")
-            phases = {desc.sell_phase, desc.short_led_phase, desc.long_led_phase}
-            if len(phases) != 3 or not phases <= set(range(self.k_values[0])):
-                raise ValueError("sell, short-led and long-led phases must be three valid phases")
             if self.frozen_train_end is None:
                 raise ValueError("the descriptive tool needs frozen_train_end for criterion D5")
-            legs = {desc.level_series, desc.slope_long, desc.slope_short}
-            if not legs <= set(self.series) or desc.slope_long == desc.slope_short:
-                raise ValueError(
-                    "level and slope series must be series of the curve, slope legs distinct"
-                )
             if len(set(desc.phase_names)) != len(desc.phase_names):
                 raise ValueError("phase names must be different from each other")
+            claim = (desc.short_led_phase, desc.long_led_phase, desc.slope_long, desc.slope_short)
+            if any(v is None for v in claim) and not all(v is None for v in claim):
+                raise ValueError(
+                    "the curve-shape claim takes short_led_phase, long_led_phase, slope_long "
+                    "and slope_short: all four or none"
+                )
+            if desc.sell_phase not in range(self.k_values[0]):
+                raise ValueError("the sell phase must be a valid phase")
+            if desc.level_series not in self.series:
+                raise ValueError("the level series must be one of the series of the curve")
+            if desc.has_curve_shape_claim:
+                phases = {desc.sell_phase, desc.short_led_phase, desc.long_led_phase}
+                if len(phases) != 3 or not phases <= set(range(self.k_values[0])):
+                    raise ValueError(
+                        "sell, short-led and long-led phases must be three valid phases"
+                    )
+                legs = {desc.slope_long, desc.slope_short}
+                if not legs <= set(self.series) or desc.slope_long == desc.slope_short:
+                    raise ValueError(
+                        "level and slope series must be series of the curve, slope legs distinct"
+                    )
 
 
 def _only_known_keys(section: dict[str, object], kind: type, where: str) -> None:
@@ -146,6 +171,11 @@ def _only_known_keys(section: dict[str, object], kind: type, where: str) -> None
     unknown = sorted(set(section) - {f.name for f in fields(kind)})
     if unknown:
         raise ValueError(f"unknown keys in {where}: {unknown}")
+
+
+def _optional[T](section: Mapping[str, Any], key: str, kind: Callable[[Any], T]) -> T | None:
+    value = section.get(key)
+    return None if value is None else kind(value)
 
 
 def load_config(path: Path) -> CoreConfig:
@@ -189,11 +219,13 @@ def load_config(path: Path) -> CoreConfig:
         else DescriptiveConfig(
             phase_names=tuple(str(name) for name in desc["phase_names"]),
             sell_phase=int(desc["sell_phase"]),
-            short_led_phase=int(desc["short_led_phase"]),
-            long_led_phase=int(desc["long_led_phase"]),
             level_series=str(desc["level_series"]),
-            slope_long=str(desc["slope_long"]),
-            slope_short=str(desc["slope_short"]),
+            short_led_phase=_optional(desc, "short_led_phase", int),
+            long_led_phase=_optional(desc, "long_led_phase", int),
+            slope_long=_optional(desc, "slope_long", str),
+            slope_short=_optional(desc, "slope_short", str),
+            holdout_already_seen=bool(desc.get("holdout_already_seen", False)),
+            holdout_seen_by=str(desc.get("holdout_seen_by", "")),
             change_days=int(desc["change_days"]),
             coherence_share_min=float(desc["coherence_share_min"]),
             min_days_evaluable=int(desc["min_days_evaluable"]),

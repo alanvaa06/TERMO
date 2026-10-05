@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from conftest import fake_fred, make_desc_config
+from conftest import fake_fred, make_desc2_config, make_desc_config
 from termo.config import CoreConfig
 from termo.core import SETUP_TRIAL, registered_columns, take_snapshot
 from termo.data.loader import load_curve
@@ -22,7 +22,10 @@ from termo.descriptive.criteria import APTO, NO_APTO
 from termo.descriptive.stages import (
     FILES,
     HOLDOUT_DIR,
+    LIMITS,
+    NO_SHAPE_CLAIM_LIMIT,
     PRE_HOLDOUT_DIR,
+    already_seen_limit,
     analyse,
     desc_trial_id,
     holdout_desc,
@@ -484,6 +487,170 @@ def test_holdout_runs_once_on_holdout_days_only(
     before[copy.path] = _sha256(copy.path)
     assert holdout_desc(desc_config, snapshot_dir, copy, private_trials, reports, COMMIT) == result
     assert {path: _sha256(path) for path in before} == before
+
+
+def test_reports_describe_every_phase_without_deciding(
+    finished: Path, opened: Opened, desc_config: CoreConfig
+) -> None:
+    assert desc_config.descriptive is not None
+    names = list(desc_config.descriptive.phase_names)
+    for payload, markdown in (
+        (
+            json.loads((finished / "diagnostic.json").read_text(encoding="utf-8")),
+            (finished / "diagnostic.md").read_text(encoding="utf-8"),
+        ),
+        (
+            json.loads((opened.reports / "holdout.json").read_text(encoding="utf-8")),
+            (opened.reports / "holdout.md").read_text(encoding="utf-8"),
+        ),
+    ):
+        rows = payload["by_phase"]
+        assert [r["phase"] for r in rows] == [0, 1, 2] and [r["name"] for r in rows] == names
+        assert sum(r["days"] for r in rows) == payload["days"]
+        columns = {"evaluable", "median_duration_days", "direction_share", "recall", "episodes"}
+        assert all(set(r) >= columns for r in rows)
+        assert markdown.isascii() and "## By phase" in markdown
+        assert "| Phase | Days | Evaluable | Median duration (days) | Direction share |" in markdown
+        checks_at, table_at = markdown.index("| Check |"), markdown.index("## By phase")
+        assert checks_at < table_at < markdown.index("## What these checks do not prove")
+        assert all(f"| {name} |" in markdown for name in names)
+        # the configuration with the claim keeps the fixed limits, and a clean holdout
+        assert payload["limits"] == list(LIMITS) and "ALREADY SEEN" not in markdown
+        assert "holdout_already_seen" not in payload
+    assert "(holdout, clean data)" in (opened.reports / "holdout.md").read_text(encoding="utf-8")
+    logged = holdout_result(opened.log)
+    assert (
+        logged is not None
+        and logged["by_phase"]
+        == json.loads((opened.reports / "holdout.json").read_text(encoding="utf-8"))["by_phase"]
+    )
+
+
+@dataclass(frozen=True)
+class Reregistered:
+    """The post-holdout registry (no curve-shape claim, holdout already seen) run end to end."""
+
+    config: CoreConfig
+    log: TrialLog
+    trials: Path
+    reports: Path
+
+
+@pytest.fixture(scope="module")
+def reregistered(
+    finished: Path,
+    tmp_path_factory: pytest.TempPathFactory,
+    snapshot_dir: Path,
+    log: TrialLog,
+    prior_log: Path,
+) -> Reregistered:
+    root = tmp_path_factory.mktemp("termo-desc2")
+    priors = (prior_log.as_posix(), log.path.as_posix())
+    config = replace(make_desc2_config(), prior_trial_logs=priors)
+    second = TrialLog(root / "trials" / "desc2" / "trials.jsonl")
+    data_hash = snapshot_hash(snapshot_dir)
+    curve = load_curve(snapshot_dir, config.series, config.start, config.holdout_start)
+    before = _sha256(log.path)
+    register_desc(config, curve, second, data_hash, COMMIT)
+    data = prepare(curve, config, registered_columns(second))
+    run_desc(data, second, root / "trials" / "desc2", data_hash, COMMIT, echo=lambda _: None)
+    report_desc(data, second, root / "trials" / "desc2", root / "reports", data_hash, COMMIT)
+    assert _sha256(log.path) == before  # the earlier registry is read, never written
+    return Reregistered(config, second, root / "trials" / "desc2", root / "reports")
+
+
+def test_the_reregistration_recomputes_the_same_files_without_d4(
+    reregistered: Reregistered, log: TrialLog, desc_config: CoreConfig
+) -> None:
+    second = reregistered.log
+    registered = second.registrations()["desc_k3"]
+    assert "criteria D1-D3, D5-D6" in registered["hypothesis"]
+    assert "rally fuerte, rally moderado, venta" in registered["hypothesis"]
+    setup = second.registrations()[SETUP_TRIAL]["config"]
+    assert setup["config"]["descriptive"]["holdout_already_seen"] is True
+    assert setup["config"]["descriptive"]["short_led_phase"] is None
+    first_report = log.last_report()
+    assert first_report is not None
+    assert setup["prior_trial_logs"][1] == {
+        "path": log.path.as_posix(),
+        "n_trials": 1,
+        "verdict": first_report["verdict"],
+    }
+    # same model, same data: the daily outputs are byte-identical to the first registry
+    files = second.results()["desc_k3"]["metrics"]["files"]
+    assert files == log.results()["desc_k3"]["metrics"]["files"]
+    checks = second.results()["desc_k3"]["metrics"]["checks"]
+    assert [c["name"] for c in checks] == [
+        "D1_persistence",
+        "D2_sell_coherence",
+        "D3_rally_coherence",
+        "D5_map_stable",
+        "D6_fidelity",
+    ]
+    payload = json.loads((reregistered.reports / "diagnostic.json").read_text(encoding="utf-8"))
+    assert [c["name"] for c in payload["checks"]] == [c["name"] for c in checks]
+    assert [r["name"] for r in payload["by_phase"]] == ["rally fuerte", "rally moderado", "venta"]
+    assert NO_SHAPE_CLAIM_LIMIT in payload["limits"]
+    assert "D2-D3 are partly true by construction" in " ".join(payload["limits"])
+    assert not any("already examined" in limit for limit in payload["limits"])
+    markdown = (reregistered.reports / "diagnostic.md").read_text(encoding="utf-8")
+    assert markdown.isascii() and "D4" not in markdown.split("## What these checks")[0]
+    assert NO_SHAPE_CLAIM_LIMIT in markdown and "ALREADY SEEN" not in markdown
+    assert payload["disclosure"]["n_trials_total"] == 4  # 2 + 1 (desc) + 1 (here)
+
+
+def test_the_holdout_of_a_reregistration_says_its_data_was_already_seen(
+    reregistered: Reregistered, opened: Opened, snapshot_dir: Path, tmp_path: Path
+) -> None:
+    config, second = reregistered.config, reregistered.log
+    trials, reports = reregistered.trials, reregistered.reports
+    assert config.descriptive is not None and config.descriptive.holdout_already_seen
+    seen_by = config.descriptive.holdout_seen_by
+    assert seen_by == "desc_k3 (test)"
+    # the same preconditions as any holdout: an APTO diagnostic report is needed
+    last = second.last_report()
+    assert last is not None and last["stage"] == "diagnostic"
+    if last["verdict"] != APTO:
+        with pytest.raises(TrialLogError, match="APTO pre-holdout diagnostic"):
+            holdout_desc(config, snapshot_dir, second, trials, reports, COMMIT)
+        assert not second.holdout_opened()
+        payload = {k: v for k, v in last.items() if k not in {"kind", "trial_id", "at"}}
+        second.record_report({**payload, "verdict": APTO})
+    result = holdout_desc(config, snapshot_dir, second, trials, reports, COMMIT)
+    kinds = [r["kind"] for r in second.records()]
+    assert kinds[-2:] == ["holdout_opened", "holdout_result"]  # its own bookkeeping, unchanged
+    logged = holdout_result(second)
+    assert logged is not None and logged["verdict"] == result
+    assert logged["holdout_already_seen"] is True and logged["holdout_seen_by"] == seen_by
+    assert [c["name"] for c in logged["checks"]] == [
+        "D1_persistence",
+        "D2_sell_coherence",
+        "D3_rally_coherence",
+        "D5_map_stable",
+        "D6_fidelity",
+    ]
+    assert already_seen_limit(seen_by) in logged["limits"]
+    assert NO_SHAPE_CLAIM_LIMIT in logged["limits"]
+    # the holdout files are the ones the first registry wrote, byte for byte
+    first = holdout_result(opened.log)
+    assert first is not None and logged["files"] == first["files"]
+    assert logged["pre_holdout_labels_sha256"] == first["pre_holdout_labels_sha256"]
+    assert [r["name"] for r in logged["by_phase"]] == ["rally fuerte", "rally moderado", "venta"]
+    assert [r["days"] for r in logged["by_phase"]] == [r["days"] for r in first["by_phase"]]
+    markdown = (reports / "holdout.md").read_text(encoding="utf-8")
+    assert markdown.isascii()
+    assert f"**Verdict: {result.upper()}** (holdout, data ALREADY SEEN by {seen_by})" in markdown
+    assert (
+        f"- The holdout period was already examined by {seen_by}: these numbers are not "
+        "clean evidence; only shadow readings are."
+    ) in markdown
+    assert NO_SHAPE_CLAIM_LIMIT in markdown
+    payload = json.loads((reports / "holdout.json").read_text(encoding="utf-8"))
+    assert payload["holdout_already_seen"] is True and payload["holdout_seen_by"] == seen_by
+    # restoring the files keeps the wording: the period comes from the logged payload
+    (reports / "holdout.md").unlink()
+    assert holdout_desc(config, snapshot_dir, second, trials, reports, COMMIT) == result
+    assert f"data ALREADY SEEN by {seen_by}" in (reports / "holdout.md").read_text(encoding="utf-8")
 
 
 def test_holdout_files_are_restored_from_the_logged_result_only_when_they_match(

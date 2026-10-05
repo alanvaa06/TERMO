@@ -6,6 +6,7 @@ import argparse
 from collections.abc import Sequence
 from datetime import date
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 
@@ -72,12 +73,21 @@ def _read(args: argparse.Namespace, log: TrialLog, data_hash: str, commit: str) 
         holdout_status = LOST_HOLDOUT
     governing = report if holdout is None else holdout
     failed = failed_checks(governing)
-    validation = {
+    registered = [{"stage": "diagnostic", "verdict": str(report["verdict"])}]
+    if holdout is not None:
+        registered.append({"stage": "holdout", "verdict": str(holdout["verdict"])})
+    validation: dict[str, Any] = {
         "diagnostic": str(report["verdict"]),
         "holdout": holdout_status,
         "failed_checks": failed,
         "fidelity_failed": FIDELITY_CHECK in failed,
+        # None for a report logged before the table existed; the reading says so
+        "by_phase": governing.get("by_phase"),
+        "registered_verdicts": registered,
     }
+    desc = config.descriptive
+    if desc is not None and desc.holdout_already_seen:
+        validation["holdout_seen_by"] = desc.holdout_seen_by
     in_holdout = pd.Timestamp(day) >= pd.Timestamp(config.holdout_start)
     if in_holdout and holdout is None:
         raise TrialLogError(
