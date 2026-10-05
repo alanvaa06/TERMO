@@ -18,7 +18,7 @@ burn_in_days: 504             # longest smoothed change (189 + 47) plus the 252-
 apply_collinearity_rule: false  # HSBC fed all 102 correlated inputs; we feed all 139
 jump_penalty_per_feature: true  # lambda = value * 139; with 10 features this is spec 1's grid
 frozen_train_end: 1997-12-31  # K-means fitted once through here, read 1998-01 -> 2024-09
-prior_trial_logs: [trials/trials.jsonl]  # counted in the report: 30 trials, verdict no-go
+prior_trial_logs: [trials/trials.jsonl]  # counted in the report: 29 trials + setup, verdict no-go
 # --- end spec 2 ---
 
 grid:

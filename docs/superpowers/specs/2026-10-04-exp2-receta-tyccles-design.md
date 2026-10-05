@@ -119,7 +119,7 @@ Al estilo HSBC: se ajusta **una sola vez** con datos desde el arranque hasta **1
 
 ### 5.4 Grilla registrada
 
-24 JM + 4 K-means reentrenado + 4 K-means congelado + inercia + setup = **34 registros** (33 trials). Con los 30 de spec 1, el proyecto lleva **63 trials registrados**; el reporte lo dice.
+24 JM + 4 K-means reentrenado + 4 K-means congelado + inercia + setup = **34 registros = 33 trials + setup**. Con los 29 de spec 1, el proyecto lleva **62 trials registrados**; el reporte lo dice.
 
 ---
 

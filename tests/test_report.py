@@ -108,8 +108,8 @@ def test_markdown_lists_families_and_disclosure_when_present() -> None:
             },
             "disclosure": {
                 "n_trials_this_log": 33,
-                "prior_logs": [{"path": "trials/trials.jsonl", "n_trials": 30, "verdict": "no-go"}],
-                "n_trials_total": 63,
+                "prior_logs": [{"path": "trials/trials.jsonl", "n_trials": 29, "verdict": "no-go"}],
+                "n_trials_total": 62,
                 "note": "The pre-holdout data were already examined.",
             },
         },
@@ -120,6 +120,6 @@ def test_markdown_lists_families_and_disclosure_when_present() -> None:
     )
     assert "## Disclosure" in text
     assert "- Trials in this log: 33" in text
-    assert "- trials/trials.jsonl: 30 trials, verdict no-go" in text
-    assert "- Total registered trials: 63" in text
+    assert "- trials/trials.jsonl: 29 trials, verdict no-go" in text
+    assert "- Total registered trials: 62" in text
     assert text.isascii()

@@ -104,11 +104,14 @@ def render_markdown(report: CoreReport) -> str:
             "|---|---|---|---|---|",
         ]
         for name, outcome in families.items():
-            low = outcome["gate"]["eta_difference_low"]
+            # A family without an eligible configuration has no final model and no gate.
+            final = outcome.get("final_trial_id")
+            gate = outcome.get("gate")
+            model = "-" if final is None else f"`{final}`"
+            low = "-" if gate is None else f"{gate['eta_difference_low']:.4f}"
             mark = "chosen" if name == chosen else ""
             lines.append(
-                f"| {name} | {str(outcome['verdict']).upper()} | `{outcome['final_trial_id']}` "
-                f"| {low:.4f} | {mark} |"
+                f"| {name} | {str(outcome['verdict']).upper()} | {model} | {low} | {mark} |"
             )
     disclosure = report.details.get("disclosure")
     if disclosure:

@@ -2193,7 +2193,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 .venv/Scripts/python.exe -m termo.cli report --config configs/exp2.yaml --snapshot data/snapshots/2026-10-02 --trials-dir trials/exp2 --reports-dir reports/exp2
 ```
 
-Expected: `[ok] verdict: go|no-go -> reports/exp2/go_no_go.md`. Check the markdown has `## Families` and `## Disclosure` with `Total registered trials: 63`.
+Expected: `[ok] verdict: go|no-go -> reports/exp2/go_no_go.md`. Check the markdown has `## Families` and `## Disclosure` with `Total registered trials: 62`.
 
 - [ ] **Step 4: Commit the report and the context files**
 

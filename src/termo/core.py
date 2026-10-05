@@ -84,6 +84,10 @@ KNOWN_LIMITATIONS = (
     "sensitivity check: it is reported and never decides.",
     "Evidence for jump models comes from equities; these tests are the criterion for rates.",
 )
+NO_ELIGIBLE_REASON = (
+    "no eligible configuration: none passes the minimum median duration "
+    "with positive stability and positive separation"
+)
 
 
 def jump_trial_id(n_states: int, jump_penalty: float) -> str:
@@ -537,6 +541,12 @@ def build_report(
             for t in trial_ids
             if is_model(t, MODEL_KMEANS) or is_model(t, MODEL_INERTIA)
         },
+        "baselines_passes_duration": {
+            t: bool(results[t]["metrics"]["passes_duration"])
+            for t in trial_ids
+            if is_model(t, MODEL_KMEANS)
+        },
+        "hypotheses": list(_setup(log)["config"].get("hypotheses", [])),
         "limitations": limitations,
         "disclosure": disclosure(log),
     }
@@ -545,12 +555,24 @@ def build_report(
         raise TrialLogError("no candidate trials in the log")
     inertia = logged_labels(log, trials_dir, INERTIA_TRIAL)
     outcomes: dict[str, FamilyOutcome] = {}
+    reported: dict[str, dict[str, Any]] = {}  # every family with candidates, eligible or not
+    without_eligible: list[str] = []
     for family, candidates in families.items():
-        if candidates:
-            outcome = _family_outcome(family, candidates, data, log, trials_dir, inertia)
-            if outcome is not None:
-                outcomes[family] = outcome
-    details["families"] = {name: o.payload() for name, o in outcomes.items()}
+        if not candidates:
+            continue
+        outcome = _family_outcome(family, candidates, data, log, trials_dir, inertia)
+        if outcome is None:
+            reported[family] = {
+                "verdict": Verdict.NO_GO.value,
+                "final_trial_id": None,
+                "n_trials": len(candidates),
+                "reason": NO_ELIGIBLE_REASON,
+            }
+            without_eligible.append(f"Family {family}: no eligible configuration.")
+        else:
+            outcomes[family] = outcome
+            reported[family] = outcome.payload()
+    details["families"] = reported
     if not outcomes:
         return CoreReport(
             verdict=Verdict.NO_GO,
@@ -559,14 +581,15 @@ def build_report(
             notes=(
                 "No configuration passes the minimum median duration "
                 "with positive stability and positive separation.",
+                *without_eligible,
             ),
             details=details,
         )
 
     passing = [o for o in outcomes.values() if o.verdict is Verdict.GO]
     chosen = max(passing or list(outcomes.values()), key=lambda o: o.separation_low)
-    notes = list(chosen.notes)
-    if len(outcomes) > 1:
+    notes = list(chosen.notes) + without_eligible
+    if len(reported) > 1:
         notes.append(
             f"Family {chosen.family} decides: "
             + ("it passes every blocking criterion" if passing else "no family passes")
