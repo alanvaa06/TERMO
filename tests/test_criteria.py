@@ -136,10 +136,38 @@ def test_checks_use_the_configured_thresholds(desc_config: CoreConfig) -> None:
 def test_calibration_reports_brier_and_reliability() -> None:
     labels, _, proba, _ = _case()
     report = calibration(labels, proba, bins=5)
-    assert set(report) == {"brier", "reliability"}
+    assert set(report) == {"brier", "reliability", "recall_by_phase"}
+    assert report["recall_by_phase"]["2"] == {"days": 200, "recall": 1.0}
     assert set(report["brier"]) == {"0", "1", "2"}
     assert all(0.0 <= value <= 1.0 for value in report["brier"].values())
     assert all(
         {"bin", "mean_probability", "share_correct", "days"} == set(row)
         for row in report["reliability"]
     )
+
+
+def test_fidelity_ignores_a_phase_with_too_few_days(desc_config: CoreConfig) -> None:
+    """Three missed days of a phase that barely appears must not decide the verdict."""
+    labels, curve, proba, frozen = _case()
+    keep = labels.index[:403]  # 200 sell, 200 long-led rally, 3 short-led rally
+    few = proba.loc[keep].copy()
+    few.iloc[-3:] = [0.05, 0.9, 0.05]  # the surrogate misses the three days of phase 0
+    checks = evaluate(labels.loc[keep], curve, few, frozen.loc[keep], desc_config)
+    assert _by_name(checks, "D6_fidelity").value == pytest.approx(1.0)
+    assert _by_name(checks, "D6_fidelity").passed is True
+    report = calibration(labels.loc[keep], few, bins=5)
+    assert report["recall_by_phase"]["0"] == {"days": 3, "recall": 0.0}  # still visible
+    # with enough days the same misses do count
+    many = proba.copy()
+    many.loc[labels == 0] = [0.05, 0.9, 0.05]
+    failing = evaluate(labels, curve, many, frozen, desc_config)
+    assert _by_name(failing, "D6_fidelity").value == pytest.approx(2 / 3)
+    assert _by_name(failing, "D6_fidelity").passed is False
+
+
+def test_fidelity_is_not_evaluable_without_an_evaluable_phase(desc_config: CoreConfig) -> None:
+    labels, curve, proba, frozen = _case()
+    short = pd.Index(np.r_[labels.index[:30], labels.index[200:230], labels.index[400:430]])
+    checks = evaluate(labels.loc[short], curve, proba.loc[short], frozen.loc[short], desc_config)
+    assert _by_name(checks, "D6_fidelity").passed is None
+    assert verdict(checks) == NO_APTO

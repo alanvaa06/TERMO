@@ -100,7 +100,7 @@ Todos contemporáneos. Se calculan dos veces con el mismo código: sobre pre-hol
 Reglas:
 
 - Cambios a 63 días = diferencia simple de la serie cruda (no la suavizada de las variables).
-- Una fase con menos de 40 días en el periodo evaluado es **no evaluable** para D1–D4: se reporta y no reprueba. Si las tres son no evaluables, el veredicto es NO APTO por falta de evidencia.
+- Una fase con menos de 40 días en el periodo evaluado es **no evaluable** para D1–D4 y tampoco cuenta en D6 (decisión del usuario, 2026-10-05, antes de registrar y sin haber visto el diagnóstico): tres días fallados de una fase que casi no aparece no deben decidir. El acierto del imitador por fase, incluidas las no evaluables, se reporta aparte sin decidir. Se reporta y no reprueba. Si las tres son no evaluables, el veredicto es NO APTO por falta de evidencia.
 - D5 sobre pre-holdout: un jump model ajustado una sola vez con datos hasta 2014-12-31 (y nunca reentrenado) contra el walk-forward, en los días posteriores hasta 2024-09-30. Sobre holdout: ajustado una sola vez con todos los datos hasta 2024-09-30, contra el walk-forward en los días del holdout. Es el mismo mecanismo de "refit congelado" de spec 2.
 - **Veredicto:** APTO si pasan todos los criterios evaluables; NO APTO si falla alguno.
 - **El holdout solo se abre si el diagnóstico pre-holdout es APTO.** Si D5 o D6 fallan en pre-holdout, la herramienta ya no sirve y no se gasta el holdout.

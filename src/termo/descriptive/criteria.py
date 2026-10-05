@@ -106,9 +106,18 @@ def evaluate(
     else:
         d5 = _check("D5_map_stable", None, f">= {desc.map_ari_min}", None)
 
-    guess = proba.idxmax(axis=1).to_numpy().astype(int)
-    fidelity = float(balanced_accuracy_score(labels.to_numpy().astype(int), guess))
-    d6 = _check("D6_fidelity", fidelity, f">= {desc.fidelity_min}", fidelity >= desc.fidelity_min)
+    # Like D1-D4, only phases with enough days count: three missed days of a phase that
+    # barely appears must not decide. Recall of every phase is reported in `calibration`.
+    judged = labels.isin(sorted(evaluable)).to_numpy()
+    if judged.any():
+        truth = labels.to_numpy().astype(int)[judged]
+        guess = proba.idxmax(axis=1).to_numpy().astype(int)[judged]
+        fidelity = float(balanced_accuracy_score(truth, guess))
+        d6 = _check(
+            "D6_fidelity", fidelity, f">= {desc.fidelity_min}", fidelity >= desc.fidelity_min
+        )
+    else:
+        d6 = _check("D6_fidelity", None, f">= {desc.fidelity_min}", None)
     return (
         d1,
         share_check("D2_sell_coherence", [desc.sell_phase], rising=True),
@@ -129,7 +138,7 @@ def verdict(checks: Sequence[Check]) -> str:
 
 
 def calibration(labels: pd.Series, proba: pd.DataFrame, bins: int) -> dict[str, Any]:
-    """Brier score per phase and a reliability table of the top probability. Reported only."""
+    """Brier per phase, reliability of the top probability, recall per phase. Reported only."""
     truth = labels.to_numpy().astype(int)
     brier = {
         str(phase): float(np.mean((proba[phase].to_numpy() - (truth == phase)) ** 2))
@@ -148,4 +157,11 @@ def calibration(labels: pd.Series, proba: pd.DataFrame, bins: int) -> dict[str, 
         }
         for b in range(bins)
     ]
-    return {"brier": brier, "reliability": reliability}
+    recall = {
+        str(phase): {
+            "days": int((truth == phase).sum()),
+            "recall": float(correct[truth == phase].mean()) if (truth == phase).any() else None,
+        }
+        for phase in proba.columns
+    }
+    return {"brier": brier, "reliability": reliability, "recall_by_phase": recall}

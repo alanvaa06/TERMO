@@ -159,7 +159,7 @@ def test_run_writes_hashed_files_and_records_the_checks(
     assert [c["name"] for c in metrics["checks"]][0] == "D1_persistence"
     assert len(metrics["checks"]) == 7
     assert metrics["verdict"] in {APTO, NO_APTO}
-    assert set(metrics["calibration"]) == {"brier", "reliability"}
+    assert set(metrics["calibration"]) == {"brier", "reliability", "recall_by_phase"}
     json.dumps(metrics)
 
 
