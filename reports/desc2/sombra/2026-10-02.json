@@ -1,0 +1,171 @@
+{
+  "alert": null,
+  "code_commit": "abf07acef463126f3963067f549524baf1f051c9.6a5c57e0ac867a298aebe67f11d48e96347936aa.0bc700641939a01b2d9632b6a65563ca6117cdbc",
+  "environment": {
+    "jumpmodels": "0.1.1",
+    "numpy": "2.5.3",
+    "pandas": "3.0.6",
+    "python": "3.14.2",
+    "scikit-learn": "1.9.1",
+    "scipy": "1.18.1",
+    "shap": "0.52.0",
+    "xgboost": "3.4.1"
+  },
+  "files": {
+    "frozen_labels.csv": "015e88e13cba2b526beb717deb44cc47675608ea46bb449ad068a9572ca1ce18",
+    "labels.csv": "015e88e13cba2b526beb717deb44cc47675608ea46bb449ad068a9572ca1ce18",
+    "proba.csv": "fa46c8b8d7924bd7d743eb144703d52812917112322dd0dfca0282624d030a08",
+    "shap_blocks.csv": "d339934ef67004a75d63ae891bc88452e0590b586be9561af23f82089f8a8687",
+    "shap_top.csv": "8b1cbf8d682e219bf985b52d365e57ed925eca51fa93c10edfdf05db534fb533"
+  },
+  "history": {
+    "differing": {},
+    "reproduced": true
+  },
+  "kind": "reading",
+  "macro": [
+    {
+      "cambio_21d": 0.18089999999999995,
+      "dias_de_ventana": 2520,
+      "fecha_valor": "2026-09-25",
+      "nota": "último dato disponible: 2026-09-25",
+      "percentil_10a": 0.9996031746031746,
+      "serie": "prima por plazo 10 anos (Kim-Wright)",
+      "valor": 1.0203
+    },
+    {
+      "cambio_21d": 0.1900000000000004,
+      "dias_de_ventana": 2520,
+      "fecha_valor": "2026-10-02",
+      "nota": "",
+      "percentil_10a": 0.925,
+      "serie": "DGS2 - fed funds efectiva",
+      "valor": 0.9500000000000002
+    }
+  ],
+  "reading": {
+    "confidence": 0.9999668598175049,
+    "date": "2026-10-02",
+    "days_in_phase": 199,
+    "disclaimer": "TERMO describes the current phase of the curve. It does not anticipate the 10Y: in 62 registered trials the phases did not beat inertia.",
+    "drivers": [
+      {
+        "block": "nivel medio",
+        "contribution": 2.697891298448667
+      },
+      {
+        "block": "nivel largo",
+        "contribution": 0.7199136035051197
+      },
+      {
+        "block": "nivel corto",
+        "contribution": 0.6849506968865171
+      }
+    ],
+    "drivers_validated": true,
+    "episode_start": "2025-12-18",
+    "generated_with": {
+      "code_commit": "abf07acef463126f3963067f549524baf1f051c9.6a5c57e0ac867a298aebe67f11d48e96347936aa.0bc700641939a01b2d9632b6a65563ca6117cdbc",
+      "environment": {
+        "jumpmodels": "0.1.1",
+        "numpy": "2.5.3",
+        "pandas": "3.0.6",
+        "python": "3.14.2",
+        "scikit-learn": "1.9.1",
+        "scipy": "1.18.1",
+        "shap": "0.52.0",
+        "xgboost": "3.4.1"
+      },
+      "registered_code_commit": "39b4c8bbc2cfa9dab769ae5e129bb8ccd903ec30.11bd33cae642b93768b694b02a7b49f18cd40c12.0bc700641939a01b2d9632b6a65563ca6117cdbc"
+    },
+    "low_confidence": false,
+    "phase": 2,
+    "phase_name": "venta",
+    "probabilities": {
+      "rally fuerte": 1.207992227136856e-05,
+      "rally moderado": 2.106805914081633e-05,
+      "venta": 0.9999668598175049
+    },
+    "surrogate_agrees": true,
+    "top_variables": [
+      {
+        "contribution": 0.9123563766479492,
+        "variable": "d5_63_r252"
+      },
+      {
+        "contribution": 0.4978978931903839,
+        "variable": "d7_84_r252"
+      },
+      {
+        "contribution": 0.2990048825740814,
+        "variable": "c5_189_r252"
+      },
+      {
+        "contribution": 0.2432520091533661,
+        "variable": "s10s30_63_r252"
+      },
+      {
+        "contribution": 0.1679946482181549,
+        "variable": "s10s30_84_r252"
+      }
+    ],
+    "validation": {
+      "by_phase": [
+        {
+          "days": 19,
+          "direction_share": 0.8947368421052632,
+          "episodes": 1,
+          "evaluable": false,
+          "median_duration_days": 19.0,
+          "name": "rally fuerte",
+          "phase": 0,
+          "recall": 0.5789473684210527
+        },
+        {
+          "days": 198,
+          "direction_share": 0.7070707070707071,
+          "episodes": 1,
+          "evaluable": true,
+          "median_duration_days": 198.0,
+          "name": "rally moderado",
+          "phase": 1,
+          "recall": 0.7222222222222222
+        },
+        {
+          "days": 282,
+          "direction_share": 0.9148936170212766,
+          "episodes": 2,
+          "evaluable": true,
+          "median_duration_days": 141.0,
+          "name": "venta",
+          "phase": 2,
+          "recall": 0.9645390070921985
+        }
+      ],
+      "diagnostic": "apto",
+      "failed_checks": [],
+      "fidelity_failed": false,
+      "holdout": "apto",
+      "holdout_seen_by": "desc_k3 (trials/desc), opened 2026-10-05, verdict no-apto by D4 only",
+      "registered_verdicts": [
+        {
+          "stage": "diagnostic",
+          "verdict": "apto"
+        },
+        {
+          "stage": "holdout",
+          "verdict": "apto"
+        }
+      ],
+      "sombra": {
+        "historia_reproducida": true,
+        "proxima_evaluacion_semanas": 25,
+        "semanas": 1
+      }
+    }
+  },
+  "reading_date": "2026-10-02",
+  "run_at": "2026-10-06T03:01:21+00:00",
+  "snapshot_downloaded_at": "2026-10-06T03:01:19+00:00",
+  "snapshot_hash": "a0faba4b93e5c14152f89d6f0f8da2005e6d5db2c416322d41857fb706a0d122"
+}
