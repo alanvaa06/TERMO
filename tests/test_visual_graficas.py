@@ -94,13 +94,17 @@ def test_surrogate_against_phase(datos: DatosReporte) -> None:
     franjas = [t for t in fig.data if isinstance(t, go.Heatmap)]
     areas = [t for t in fig.data if isinstance(t, go.Scatter)]
     assert len(franjas) == 2 and len(areas) == 3
-    semanas = _semanas(datos)
-    for traza in fig.data:
-        assert len(traza.x) == len(semanas)
-        assert traza.x[-1] == datos.fecha.strftime("%Y-%m-%d")
-    assert list(franjas[0].z[0]) == datos.historia["fase"].loc[semanas].tolist()
-    imitador = calculos.fase_imitador(datos.historia, NOMBRES).loc[semanas]
+    hoy = datos.fecha.strftime("%Y-%m-%d")
+    # the strips are daily: a one-day disagreement is never sampled away ...
+    for franja in franjas:
+        assert len(franja.x) == len(datos.historia) and franja.x[-1] == hoy
+    assert list(franjas[0].z[0]) == datos.historia["fase"].tolist()
+    imitador = calculos.fase_imitador(datos.historia, NOMBRES)
     assert list(franjas[1].z[0]) == imitador.tolist()
+    assert list(franjas[0].z[0]) != list(franjas[1].z[0])  # the planted disagreements
+    # ... the probability areas are weekly
+    for area in areas:
+        assert len(area.x) == len(_semanas(datos)) and area.x[-1] == hoy
     assert {t.stackgroup for t in areas} == {"p"}
 
 
@@ -209,14 +213,17 @@ def test_macro_has_one_axis_and_a_band(datos: DatosReporte) -> None:
 
 
 def test_marks_and_reference_lines_read_on_both_papers(datos: DatosReporte) -> None:
+    cascada = g.fig_motores_hoy(datos)
     colores = [
-        g.fig_motores_hoy(datos).data[0].totals.marker.color,
+        cascada.data[0].totals.marker.color,
+        cascada.data[0].connector.line.color,
+        cascada.layout.template.layout.xaxis.linecolor,  # every figure's x axis line
         g.fig_dispersion(datos).data[-1].marker.color,  # the current episode's ring
         g.fig_duraciones(datos).data[-1].marker.color,  # the current episode's diamond
     ]
     for fig in (g.fig_dispersion(datos), g.fig_firma(datos)):
         colores += [forma.line.color for forma in fig.layout.shapes]  # diagonal, zero lines
-    assert len(colores) == 7 and all(_legible(c) for c in colores)
+    assert len(colores) == 9 and all(_legible(c) for c in colores)
 
 
 def _todas(datos: DatosReporte) -> Iterator[tuple[str, go.Figure]]:

@@ -25,7 +25,7 @@ COLORES_BLOQUE = ("#6250d6", "#eb6834", "#eda100", "#e87ba4", "#008300", "#88878
 GRIS = "#888780"  # 3.45 on light, 5.02 on dark
 MARCA = "#77756f"  # 4.41 on light, 3.93 on dark: totals and the current episode
 TINTA = "#4a4843"  # the light-mode font only: the page script recolours it in dark mode
-EJE = "#c3c2b7"
+EJE = GRIS  # x axis line, ticks, waterfall connector (#c3c2b7 was 1.72 on light)
 RETICULA = "rgba(137,135,129,0.18)"
 COLOR_MACRO = "#6250d6"
 GRISES_CURVA = (("hace 1m", "dot", 2.4), ("hace 3m", "dash", 1.6),
@@ -167,19 +167,21 @@ def fig_10a(datos: DatosReporte) -> go.Figure:
 def fig_imitador(datos: DatosReporte) -> go.Figure:
     """Jump-model phase and surrogate phase as strips, the surrogate's probabilities below.
 
-    Sampled weekly (the last labelled day of each week) to keep the page light.
+    The strips are daily, so a one-day disagreement is never sampled away; the probability
+    areas are sampled weekly (the last labelled day of each week) to keep the page light.
     """
-    historia = _semanal(_historia(datos))
+    historia = _historia(datos)
     fig = make_subplots(rows=3, cols=1, shared_xaxes=True, row_heights=[0.08, 0.08, 0.84],
                         vertical_spacing=0.02)
     fig.add_trace(_franja(historia["fase"], datos.nombres, "fase"), row=1, col=1)
     imitador = calculos.fase_imitador(historia, datos.nombres)
     fig.add_trace(_franja(imitador, datos.nombres, "imitador"), row=2, col=1)
-    dias = _dias(historia.index)
+    semanal = _semanal(historia)
+    dias = _dias(semanal.index)
     for fase, nombre in enumerate(datos.nombres):
         fig.add_trace(
             go.Scatter(
-                x=dias, y=_valores(historia[calculos.columna_probabilidad(nombre)]),
+                x=dias, y=_valores(semanal[calculos.columna_probabilidad(nombre)]),
                 name=nombre, stackgroup="p", mode="lines", line={"width": 0},
                 fillcolor=_rgba(color_fase(fase), 0.8),
                 hovertemplate="%{y:.2f}<extra>" + nombre + "</extra>",
