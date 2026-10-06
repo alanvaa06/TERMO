@@ -27,6 +27,7 @@ from termo.operation.visual.narrativa import (
     titular_motores_tiempo,
     titular_portada,
     titular_transicion,
+    titular_validacion,
     titulares,
 )
 from visual_fixture import make_datos
@@ -62,13 +63,26 @@ def _a(*proporciones: float | None) -> dict[str, float | None]:
 def test_cover_headline_places_the_episode_against_the_quartiles() -> None:
     posicion = Posicion(dias=199, episodios=55, p25=41.0, mediana=85.0, p75=114.0)
     assert titular_portada("venta", posicion) == (
-        "La curva está en venta: 199 días, por encima del rango intercuartil histórico"
+        "La curva lleva 199 días en venta, más que el P75 de los episodios de venta "
+        "cerrados (114 días)"
+    )
+    corto = Posicion(dias=20, episodios=55, p25=40.75, mediana=85.0, p75=114.25)
+    assert titular_portada("venta", corto) == (
+        "La curva lleva 20 días en venta, menos que el P25 de los episodios de venta "
+        "cerrados (41 días)"
+    )
+    dentro = Posicion(dias=60, episodios=55, p25=40.75, mediana=85.0, p75=114.25)
+    assert titular_portada("venta", dentro) == (
+        "La curva lleva 60 días en venta, entre el P25 y el P75 de los episodios de venta "
+        "cerrados (41 a 114 días)"
     )
     sin_pasado = Posicion(dias=12, episodios=0, p25=None, mediana=None, p75=None)
-    assert titular_portada("rally fuerte", sin_pasado) == "La curva está en rally fuerte: 12 días"
+    assert titular_portada("rally fuerte", sin_pasado) == "La curva lleva 12 días en rally fuerte"
     # under 4 finished episodes the thermometer shows no quartile band: no quartile clause
     pocos = Posicion(dias=199, episodios=3, p25=41.0, mediana=85.0, p75=114.0)
-    assert titular_portada("venta", pocos) == "La curva está en venta: 199 días"
+    assert titular_portada("venta", pocos) == "La curva lleva 199 días en venta"
+    uno = Posicion(dias=1, episodios=0, p25=None, mediana=None, p75=None)
+    assert titular_portada("venta", uno) == "La curva lleva 1 día en venta"
 
 
 def test_ten_year_headline() -> None:
@@ -93,28 +107,36 @@ def test_agreement_driver_and_dominant_block() -> None:
     assert titular_motor("nivel largo", -1.1722) == (
         "Movimiento tramo largo (10A-30A) es el bloque que más pesa en la lectura (-1.17)"
     )
-    assert titular_motores_tiempo("pendientes", "2025-12-18") == (
-        "Desde 2025-12-18, el bloque que más pesa en promedio es pendientes"
+    assert titular_motores_tiempo("pendientes", "2025-12-18", -0.4237) == (
+        "Desde el 2025-12-18, el bloque con mayor peso promedio es pendientes (-0.42)"
     )
 
 
-def test_curve_headline_names_the_reshaping() -> None:
+def test_curve_headline_gives_the_slope_change() -> None:
+    # slope change = 10A change - 2A change
     assert titular_curva(40.0, 12.0) == (
-        "En 3 meses el 2A subió 40 pb y el 10A subió 12 pb: la curva se aplanó"
+        "En 3 meses el 2A subió 40 pb y el 10A subió 12 pb; "
+        "la pendiente 2A-10A se aplanó 28 pb"
     )
     assert titular_curva(-30.0, -5.0) == (
-        "En 3 meses el 2A bajó 30 pb y el 10A bajó 5 pb: la curva se empinó"
+        "En 3 meses el 2A bajó 30 pb y el 10A bajó 5 pb; la pendiente 2A-10A se empinó 25 pb"
+    )
+    assert titular_curva(-10.0, 15.0) == (
+        "En 3 meses el 2A bajó 10 pb y el 10A subió 15 pb; la pendiente 2A-10A se empinó 25 pb"
     )
     assert titular_curva(5.0, 5.4) == (
-        "En 3 meses el 2A subió 5 pb y el 10A subió 5 pb: la curva se movió en paralelo"
+        "En 3 meses el 2A subió 5 pb y el 10A subió 5 pb; la pendiente 2A-10A no cambió"
     )
     # a 1 bp gap with float noise is a reshaping, as in the quadrants
-    assert titular_curva((4.56 - 4.53) * 100, (3.22 - 3.20) * 100).endswith("se aplanó")
+    assert titular_curva((4.56 - 4.53) * 100, (3.22 - 3.20) * 100).endswith("se aplanó 1 pb")
 
 
 def test_signature_and_macro() -> None:
     assert titular_firma("venta", "5A", 18.4) == (
-        "En venta, el plazo que más se mueve en un mes (mediana) es el 5A (+18 pb)"
+        "En venta, el 5A tiene el mayor cambio mediano a un mes (+18 pb)"
+    )
+    assert titular_firma("rally fuerte", "2A", -31.6) == (
+        "En rally fuerte, el 2A tiene el mayor cambio mediano a un mes (-32 pb)"
     )
     assert titular_firma("rally fuerte", None, None) == (
         "Sin cambios a 1 mes registrados para rally fuerte"
@@ -126,6 +148,28 @@ def test_signature_and_macro() -> None:
         "Prima por plazo 10 anos (Kim-Wright) está en el percentil 100 a 10 años "
         "(dato del 2026-09-25)"
     )
+
+
+def _v(**etapas: str) -> list[dict[str, str]]:
+    return [{"stage": etapa, "verdict": veredicto} for etapa, veredicto in etapas.items()]
+
+
+def test_validation_headline_states_the_verdicts_and_the_shadow_weeks() -> None:
+    assert titular_validacion(_v(diagnostic="apto", holdout="apto"), 1) == (
+        "Diagnóstico APTO y holdout APTO; 1 semana de sombra"
+    )
+    assert titular_validacion(_v(diagnostic="apto", holdout="no-apto"), 3) == (
+        "Diagnóstico APTO y holdout NO APTO; 3 semanas de sombra"
+    )
+    # a missing stage is left out, whatever the order of the log
+    assert titular_validacion(_v(diagnostic="no-apto"), 0) == (
+        "Diagnóstico NO APTO; 0 semanas de sombra"
+    )
+    assert titular_validacion(_v(holdout="apto", diagnostic="apto"), 2) == (
+        "Diagnóstico APTO y holdout APTO; 2 semanas de sombra"
+    )
+    assert titular_validacion(_v(holdout="apto"), 1) == "Holdout APTO; 1 semana de sombra"
+    assert titular_validacion([], 1) == "1 semana de sombra"
 
 
 def test_episodes_headline_counts_closed_episodes() -> None:
@@ -185,7 +229,10 @@ def test_every_block_gets_a_headline_and_the_cover_three_bullets() -> None:
     textos = titulares(make_datos())
     assert set(textos) == set(CLAVES)
     assert len(textos["portada"].vinetas) == 3
-    assert textos["portada"].texto.startswith("La curva está en venta: ")
+    assert textos["portada"].texto.startswith("La curva lleva ")
+    assert " días en venta" in textos["portada"].texto
+    # the synthetic week: diagnostic and holdout apto, one week of shadow
+    assert textos["validacion"].texto == "Diagnóstico APTO y holdout APTO; 1 semana de sombra"
     assert " episodios de venta ya cerrados " in textos["episodios"].texto
 
 
@@ -202,6 +249,16 @@ def test_main_driver_is_the_first_driver_of_the_sheet() -> None:
     assert textos["motores"].texto == esperado
     assert textos["portada"].vinetas[0] == esperado
     assert bloque_es(str(primero["block"]))[1:] in esperado
+
+
+def test_drivers_over_time_name_the_largest_mean_block_with_its_signed_mean() -> None:
+    datos = make_datos()
+    inicio = datos.episodios.iloc[-1]["inicio"]
+    medias = datos.historia.loc[inicio:, list(datos.bloques)].mean()
+    bloque = str(medias.abs().idxmax())
+    assert titulares(datos)["motores-tiempo"].texto == titular_motores_tiempo(
+        bloque, f"{inicio:%Y-%m-%d}", float(medias[bloque])
+    )
 
 
 def test_signature_tenor_is_the_largest_absolute_median_of_the_phase() -> None:
@@ -301,7 +358,8 @@ def test_a_short_curve_and_a_curve_without_one_month_changes() -> None:
     datos = make_datos()
     corta = titulares(dataclasses.replace(datos, curva=datos.curva.tail(50)))
     assert corta["curva"].texto == CURVA_CORTA == "La curva tiene menos de 3 meses de historia"
-    assert corta["firma"].texto.startswith("En venta, el plazo que más se mueve")
+    assert corta["firma"].texto.startswith("En venta, el ")
+    assert "tiene el mayor cambio mediano a un mes" in corta["firma"].texto
     vacia = titulares(dataclasses.replace(datos, curva=datos.curva.tail(15)))
     assert vacia["firma"].texto == "Sin cambios a 1 mes registrados para venta"
 
@@ -329,7 +387,17 @@ def _todas_las_frases() -> list[str]:
         titular_portada("venta", Posicion(5, 0, None, None, None)),
         titular_portada("venta", Posicion(5, 3, 2.0, 4.0, 6.0)),
         titular_portada("venta", Posicion(5, 6, 2.0, 4.0, 6.0)),
+        titular_portada("venta", Posicion(1, 0, None, None, None)),
+        titular_portada("venta", Posicion(1, 6, 2.0, 4.0, 6.0)),
+        titular_portada("venta", Posicion(9, 6, 2.0, 4.0, 6.0)),
         titular_curva(5.0, 5.4),
+        titular_curva(40.0, 12.0),
+        titular_curva(-30.0, -5.0),
+        titular_firma("venta", "5A", 18.4),
+        titular_motores_tiempo("pendientes", "2025-12-18", -0.42),
+        titular_validacion(_v(diagnostic="apto", holdout="no-apto"), 3),
+        titular_validacion(_v(holdout="apto"), 1),
+        titular_validacion([], 1),
         titular_10a("venta", "2025-12-18", 0.0),
     ]
     return frases

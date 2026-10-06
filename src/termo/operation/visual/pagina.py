@@ -32,7 +32,8 @@ FUENTE_MACRO = "Fuente: FRED (Kim-Wright, fed funds efectiva), TERMO."
 LEYENDA_PASADO = "Frecuencias del pasado, no pronóstico. Incluye el periodo holdout, ya abierto."
 NOTA_HOLDOUT = "La banda gris marca el periodo holdout, ya abierto."
 NOTA_MOTORES = (
-    "Cada día explica su propia fase (log-odds); cuando cambia la fase, cambia lo que se explica."
+    "Cada día muestra la contribución a la fase de ese día, en log-odds. Cuando la fase "
+    "cambia, la gráfica pasa a explicar otra probabilidad."
 )
 GUION = "-"
 NOTA_POCOS = (
@@ -98,7 +99,6 @@ figcaption{font-weight:600;font-size:15px;margin-bottom:6px}
 .bajada{font-size:14px;color:var(--tinta-2);margin:0 0 6px}
 .fuente,.leyenda,.nota{font-size:12px;color:var(--tinta-3);margin:4px 0}
 .leyenda{font-style:italic}
-.par{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:24px}
 .tarjetas{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;
 margin:16px 0}
 .tarjeta{background:var(--tarjeta);border-radius:8px;padding:14px 16px}
@@ -161,7 +161,6 @@ class Seccion:
     titular: Titular
     graficas: tuple[Grafica, ...]
     nota: str = ""
-    par: bool = False  # two charts side by side on wide screens
     aviso: str = ""  # a warning right under the heading, before any chart
 
 
@@ -191,6 +190,7 @@ def _secciones(datos: DatosReporte, textos: dict[str, Titular]) -> list[Seccion]
         Grafica(s.etiqueta, g.fig_macro(datos, s), FUENTE_MACRO) for s in datos.series_macro
     )
     aviso_motores = "" if datos.lectura["drivers_validated"] else FIDELITY_WARNING
+    franja = f"Fase de cada día, {datos.historia.index[0]:%Y} a {datos.fecha:%Y}"
     return [
         Seccion("tasa-10a", "10A por fase", textos["tasa-10a"],
                 (Grafica("Rendimiento del bono a 10 años, coloreado por fase (%)",
@@ -211,20 +211,18 @@ def _secciones(datos: DatosReporte, textos: dict[str, Titular]) -> list[Seccion]
         Seccion("curva", "Curva", textos["curva"],
                 (Grafica("Curva de Treasuries: hoy y hace 1 mes, 3 meses y 1 año",
                          g.fig_curva(datos)),
-                 Grafica("Firma de cada fase: cambio mediano a 1 mes por plazo",
+                 Grafica("Cambio mediano a 1 mes por plazo, en cada fase",
                          g.fig_firma(datos), leyenda=LEYENDA_PASADO,
-                         bajada=textos["firma"].texto)),
-                par=True),
+                         bajada=textos["firma"].texto))),
         Seccion("episodios", "Episodios", textos["episodios"],
-                (Grafica("Fases desde el inicio de la historia", g.fig_franja(datos)),
+                (Grafica(franja, g.fig_franja(datos)),
                  Grafica("Cada episodio: cambio del 2A contra cambio del 10A",
                          g.fig_dispersion(datos), leyenda=LEYENDA_PASADO))),
         Seccion("transiciones", "Transiciones", textos["transiciones"],
                 (Grafica("Fase siguiente, por fase de origen", g.fig_transiciones(datos),
                          leyenda=LEYENDA_PASADO),
                  Grafica("Duración de los episodios terminados", g.fig_duraciones(datos),
-                         leyenda=LEYENDA_PASADO)),
-                par=True),
+                         leyenda=LEYENDA_PASADO))),
         Seccion("macro", "Contexto macro", textos["macro"], macro),
     ]
 
@@ -326,8 +324,6 @@ def _seccion(seccion: Seccion, primero: int) -> tuple[str, int]:
         figuras.append(_grafica(numero, grafica))
         numero += 1
     cuerpo = "".join(figuras)
-    if seccion.par:
-        cuerpo = f'<div class="par">{cuerpo}</div>'
     aviso = f'<p class="aviso">{_e(seccion.aviso)}</p>' if seccion.aviso else ""
     nota = f'<p class="nota">{_e(seccion.nota)}</p>' if seccion.nota else ""
     return (
@@ -337,7 +333,7 @@ def _seccion(seccion: Seccion, primero: int) -> tuple[str, int]:
     )
 
 
-def _validacion(datos: DatosReporte) -> str:
+def _validacion(datos: DatosReporte, titular: Titular) -> str:
     validacion = datos.lectura["validation"]
     veredictos = " · ".join(
         f"{v['stage']}: {str(v['verdict']).upper()}" for v in validacion["registered_verdicts"]
@@ -367,7 +363,7 @@ def _validacion(datos: DatosReporte) -> str:
     vista = f'<p class="nota">{_e(SEEN_BY_NOTE)}</p>' if "holdout_seen_by" in validacion else ""
     return (
         '<section id="validacion"><p class="kicker">Validación</p>'
-        "<h2>Qué tan confiable es la lectura</h2>"
+        f"<h2>{_e(titular.texto)}</h2>"
         f'<div class="tarjetas">{cajas}</div>'
         "<table><thead><tr><th>Fase</th><th>Días</th><th>Evaluable</th><th>Recall</th>"
         f"<th>Duración mediana (días)</th></tr></thead><tbody>{filas}</tbody></table>"
@@ -402,7 +398,7 @@ def render(datos: DatosReporte, generado: str) -> str:
         cuerpo, numero = _seccion(seccion, numero)
         cuerpos.append(cuerpo)
         indice.append((seccion.ancla, seccion.indice))
-    cuerpos.append(_validacion(datos))
+    cuerpos.append(_validacion(datos, textos["validacion"]))
     indice.append(("validacion", "Validación"))
     comentario = _comentario(datos)
     if comentario:

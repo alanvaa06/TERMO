@@ -18,6 +18,7 @@ from termo.operation.visual.narrativa import titulares
 from termo.operation.visual.pagina import (
     ANCLAS,
     ARCHIVO,
+    NOTA_MOTORES,
     SCRIPT_PAGINA,
     _num,
     _termometro,
@@ -75,7 +76,7 @@ def test_charts_are_numbered_and_sourced(page: str) -> None:
 
 def test_the_cover_and_the_validation(datos: DatosReporte, page: str) -> None:
     assert "<h1>Venta</h1>" in page
-    assert "La curva está en venta" in page
+    assert "La curva lleva " in page and " días en venta" in page
     assert datos.textos["descargo"] in page
     assert "Nombres de fase elegidos tras el holdout; los valida solo la sombra." in page
     assert str(datos.hoja["snapshot_hash"])[:12] in page
@@ -93,6 +94,42 @@ def _proxima(datos: DatosReporte, semanas: int) -> str:
     lectura = {**datos.lectura, "validation": {**validacion, "sombra": sombra}}
     return _seccion(render(replace(datos, hoja={**datos.hoja, "reading": lectura}), GENERADO),
                     "validacion")
+
+
+def test_charts_stack_in_one_column(page: str) -> None:
+    # Plotly sizes each chart to the full width: side by side, two charts overlap
+    assert 'class="par"' not in page and ".par{" not in sin_plotlyjs(page)
+
+
+def test_chart_titles_and_drivers_note(datos: DatosReporte, page: str) -> None:
+    assert "Cambio mediano a 1 mes por plazo, en cada fase" in page
+    franja = f"Fase de cada día, {datos.historia.index[0]:%Y} a {datos.fecha:%Y}"
+    assert re.search(rf"<figcaption>\d+\. {re.escape(franja)}</figcaption>", page)
+    motores = _seccion(page, "motores-tiempo")
+    assert f'<p class="nota">{NOTA_MOTORES}</p>' in motores
+    assert NOTA_MOTORES == (
+        "Cada día muestra la contribución a la fase de ese día, en log-odds. Cuando la fase "
+        "cambia, la gráfica pasa a explicar otra probabilidad."
+    )
+
+
+def _con_validacion(datos: DatosReporte, veredictos: list[dict[str, str]], semanas: int) -> str:
+    validacion = datos.lectura["validation"]
+    sombra = {**validacion["sombra"], "semanas": semanas}
+    lectura = {
+        **datos.lectura,
+        "validation": {**validacion, "registered_verdicts": veredictos, "sombra": sombra},
+    }
+    return _seccion(render(replace(datos, hoja={**datos.hoja, "reading": lectura}), GENERADO),
+                    "validacion")
+
+
+def test_the_validation_heading_states_the_verdicts(datos: DatosReporte, page: str) -> None:
+    assert "<h2>Diagnóstico APTO y holdout APTO; 1 semana de sombra</h2>" in _seccion(
+        page, "validacion"
+    )
+    solo = _con_validacion(datos, [{"stage": "diagnostic", "verdict": "no-apto"}], 4)
+    assert "<h2>Diagnóstico NO APTO; 4 semanas de sombra</h2>" in solo
 
 
 def test_next_shadow_evaluation_is_pluralised(datos: DatosReporte) -> None:

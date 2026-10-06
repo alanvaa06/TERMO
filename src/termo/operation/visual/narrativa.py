@@ -28,11 +28,13 @@ CLAVES = (
     "episodios",
     "transiciones",
     "macro",
+    "validacion",
 )
 NO_VALIDADO = (
     "Las explicaciones de esta semana no pasaron la validación de fidelidad del imitador"
 )
 CURVA_CORTA = "La curva tiene menos de 3 meses de historia"
+ETAPAS = (("diagnostic", "diagnóstico"), ("holdout", "holdout"))  # validation stages, in order
 
 
 @dataclass(frozen=True)
@@ -57,10 +59,17 @@ def _movimiento(pb: float) -> str:
 
 
 def titular_portada(fase: str, posicion: Posicion) -> str:
-    base = f"La curva está en {fase}: {posicion.dias} días"
-    if posicion.relativa is None:
+    """Today's length against the quartiles of the finished episodes of the phase."""
+    base = f"La curva lleva {posicion.dias} {'día' if posicion.dias == 1 else 'días'} en {fase}"
+    relativa, p25, p75 = posicion.relativa, posicion.p25, posicion.p75
+    if relativa is None or p25 is None or p75 is None:
         return base
-    return f"{base}, {posicion.relativa} del rango intercuartil histórico"
+    cerrados = f"los episodios de {fase} cerrados"
+    if relativa == "por encima":
+        return f"{base}, más que el P75 de {cerrados} ({p75:.0f} días)"
+    if relativa == "por debajo":
+        return f"{base}, menos que el P25 de {cerrados} ({p25:.0f} días)"
+    return f"{base}, entre el P25 y el P75 de {cerrados} ({p25:.0f} a {p75:.0f} días)"
 
 
 def titular_10a(fase: str, inicio: str, cambio_pb: float) -> str:
@@ -76,28 +85,31 @@ def titular_motor(bloque: str, aporte: float) -> str:
     return f"{_capital(bloque_es(bloque))} es el bloque que más pesa en la lectura ({aporte:+.2f})"
 
 
-def titular_motores_tiempo(bloque: str, inicio: str) -> str:
-    return f"Desde {inicio}, el bloque que más pesa en promedio es {bloque_es(bloque)}"
+def titular_motores_tiempo(bloque: str, inicio: str, media: float) -> str:
+    """`media` is the block's signed mean contribution since `inicio`."""
+    return (
+        f"Desde el {inicio}, el bloque con mayor peso promedio es {bloque_es(bloque)} "
+        f"({media:+.2f})"
+    )
 
 
 def titular_curva(cambio_2y: float, cambio_10y: float) -> str:
+    """The 2A-10A slope changed by d10 - d2 bp: positive steepens, negative flattens."""
     if calculos.paralelo(cambio_2y, cambio_10y):
-        forma = "se movió en paralelo"
+        pendiente = "no cambió"
     else:
-        forma = "se aplanó" if cambio_2y > cambio_10y else "se empinó"
+        cambio = cambio_10y - cambio_2y
+        pendiente = f"{'se empinó' if cambio > 0 else 'se aplanó'} {abs(cambio):.0f} pb"
     return (
-        f"En 3 meses el 2A {_movimiento(cambio_2y)} y el 10A {_movimiento(cambio_10y)}: "
-        f"la curva {forma}"
+        f"En 3 meses el 2A {_movimiento(cambio_2y)} y el 10A {_movimiento(cambio_10y)}; "
+        f"la pendiente 2A-10A {pendiente}"
     )
 
 
 def titular_firma(fase: str, plazo: str | None, valor_pb: float | None) -> str:
     if plazo is None or valor_pb is None:
         return f"Sin cambios a 1 mes registrados para {fase}"
-    return (
-        f"En {fase}, el plazo que más se mueve en un mes (mediana) es el {plazo} "
-        f"({valor_pb:+.0f} pb)"
-    )
+    return f"En {fase}, el {plazo} tiene el mayor cambio mediano a un mes ({valor_pb:+.0f} pb)"
 
 
 def titular_episodios(
@@ -143,6 +155,21 @@ def titular_macro(etiqueta: str, percentil: float, fecha_dato: str | None = None
     return texto if fecha_dato is None else f"{texto} (dato del {fecha_dato})"
 
 
+def titular_validacion(veredictos: Sequence[Mapping[str, object]], semanas: int) -> str:
+    """The registered diagnostic and holdout verdicts (a missing stage is left out) and the
+    weeks of shadow."""
+    por_etapa = {str(v["stage"]): str(v["verdict"]) for v in veredictos}
+    partes = [
+        f"{nombre} {por_etapa[etapa].replace('-', ' ').upper()}"
+        for etapa, nombre in ETAPAS
+        if etapa in por_etapa
+    ]
+    sombra = f"{semanas} {'semana' if semanas == 1 else 'semanas'} de sombra"
+    if not partes:
+        return _capital(sombra)
+    return f"{_capital(' y '.join(partes))}; {sombra}"
+
+
 def titulares(datos: DatosReporte) -> dict[str, Titular]:
     """One headline per block of the page (keys in CLAVES); the cover has three bullets."""
     lectura = datos.lectura
@@ -156,9 +183,9 @@ def titulares(datos: DatosReporte) -> dict[str, Titular]:
     coincidencia = calculos.acuerdo(historia, datos.nombres)
     if lectura["drivers_validated"]:
         primero = lectura["drivers"][0]  # ranked by absolute contribution, as the sheet
-        dominante, _ = calculos.bloque_dominante(historia, datos.bloques, actual["inicio"])
+        dominante, media = calculos.bloque_dominante(historia, datos.bloques, actual["inicio"])
         texto_motor = titular_motor(str(primero["block"]), float(primero["contribution"]))
-        texto_tiempo = titular_motores_tiempo(dominante, inicio)
+        texto_tiempo = titular_motores_tiempo(dominante, inicio, media)
     else:
         texto_motor = texto_tiempo = NO_VALIDADO
 
@@ -194,6 +221,10 @@ def titulares(datos: DatosReporte) -> dict[str, Titular]:
     fecha_dato = str(macro["fecha_valor"]) if macro["nota"] else None
     texto_macro = titular_macro(str(macro["serie"]), float(macro["percentil_10a"]), fecha_dato)
     texto_acuerdo = titular_acuerdo(coincidencia)
+    validacion = lectura["validation"]
+    texto_validacion = titular_validacion(
+        validacion["registered_verdicts"], int(validacion["sombra"]["semanas"])
+    )
 
     return {
         "portada": Titular(
@@ -208,4 +239,5 @@ def titulares(datos: DatosReporte) -> dict[str, Titular]:
         "episodios": Titular(texto_episodios),
         "transiciones": Titular(titular_transicion(fase, int(salida["total"]), salida["a"])),
         "macro": Titular(texto_macro),
+        "validacion": Titular(texto_validacion),
     }
