@@ -1,8 +1,9 @@
 """The visual report as one self-contained HTML page (spec 5).
 
 plotly.js is embedded once, in the head; every figure is a div plus its own small
-script. No network: no CDN, no web fonts. The page works in light and dark mode and
-prints to PDF from the browser.
+script. No network: no CDN, no web fonts. The page is always light, whatever the
+viewer's system theme (the committee reads it as a document), and prints to PDF from
+the browser.
 """
 
 from __future__ import annotations
@@ -45,16 +46,14 @@ ANCLAS = (
     "transiciones", "macro", "validacion",
 )
 
-# The light palette, also forced when printing. The <html> element carries --acento (the
+# The page's only palette, also forced when printing. The <html> element carries --acento (the
 # phase hue) and --acento-texto-claro (its darker tone for text on the light paper).
 PALETA_CLARA = (
     "--papel:#fbfaf7;--tinta:#1d1c1a;--tinta-2:#4a4843;--tinta-3:#77756e;--filete:#d9d6cc;"
     "--tarjeta:#f3f1ea;--acento-texto:var(--acento-texto-claro)"
 )
 ESTILO = """
-:root{{claro}}
-@media (prefers-color-scheme: dark){:root{--papel:#161615;--tinta:#f0efec;--tinta-2:#c3c2b7;
---tinta-3:#898781;--filete:#383835;--tarjeta:#1f1f1d;--acento-texto:var(--acento)}}
+:root{{claro};color-scheme:light}
 *{box-sizing:border-box}
 body{margin:0;background:var(--papel);color:var(--tinta);
 font:16px/1.6 "Segoe UI",Helvetica,Arial,sans-serif}
@@ -117,21 +116,14 @@ padding:8px 0}nav a{border-left:0;white-space:nowrap;padding:4px 0}h1{font-size:
 .marco{display:block;padding:0}figure.grafica,.kpis,.tarjetas{break-inside:avoid}}
 """.replace("{claro}", PALETA_CLARA)
 
-# Three jobs, no dependencies beyond plotly.js:
-# - dark mode: recolour the font and every y axis's grid (the figures ship light colours,
-#   so a light page needs no relayout on load); printing forces the light colours;
+# Two jobs, no dependencies beyond plotly.js:
+# - printing: resize the charts to the paper width and back;
 # - y follows x: in a figure marked layout.meta.ajustar_y (graficas._selector_rango), when
 #   the x range changes (buttons, zoom, autorange) refit yaxis to the points inside it,
 #   stacked areas by their total and with 0, as graficas._extremos does in Python.
 SCRIPT_PAGINA = r"""
-(function(){var q=window.matchMedia('(prefers-color-scheme: dark)');
-function graficas(){
+(function(){function graficas(){
 return Array.prototype.slice.call(document.querySelectorAll('.js-plotly-plot'));}
-function colorear(oscuro){var t=oscuro?'#c3c2b7':'__TINTA__',
-r=oscuro?'rgba(255,255,255,0.10)':'__RETICULA__';
-graficas().forEach(function(el){var c={'font.color':t};
-Object.keys(el.layout).forEach(function(k){if(/^yaxis\d*$/.test(k))c[k+'.gridcolor']=r;});
-Plotly.relayout(el,c);});}
 function dia(v){
 return typeof v==='number'?new Date(v).toISOString().slice(0,10):String(v).slice(0,10);}
 function ajustarY(el){var r=el.layout.xaxis.range;if(!r)return;
@@ -147,12 +139,10 @@ function seguirX(el){if(!(el.layout.meta&&el.layout.meta.ajustar_y))return;
 el.on('plotly_relayout',function(e){for(var k in e){
 if(k.indexOf('xaxis.')===0||k==='yaxis.autorange'){ajustarY(el);return;}}});}
 function redibujar(){graficas().forEach(function(el){Plotly.Plots.resize(el);});}
-function cambio(){colorear(q.matches);}
-window.addEventListener('load',function(){graficas().forEach(seguirX);if(q.matches)colorear(true);});
-if(q.addEventListener)q.addEventListener('change',cambio);else q.addListener(cambio);
-window.addEventListener('beforeprint',function(){colorear(false);redibujar();});
-window.addEventListener('afterprint',function(){cambio();redibujar();});})();
-""".replace("__TINTA__", g.TINTA).replace("__RETICULA__", g.RETICULA)
+window.addEventListener('load',function(){graficas().forEach(seguirX);});
+window.addEventListener('beforeprint',redibujar);
+window.addEventListener('afterprint',redibujar);})();
+"""
 
 
 @dataclass(frozen=True)
@@ -430,6 +420,7 @@ def render(datos: DatosReporte, generado: str) -> str:
             "<head>",
             '<meta charset="utf-8">',
             '<meta name="viewport" content="width=device-width, initial-scale=1">',
+            '<meta name="color-scheme" content="light">',
             f"<title>TERMO · {datos.fecha:%Y-%m-%d}</title>",
             f"<style>{ESTILO}</style>",
             f"<script>{get_plotlyjs()}</script>",

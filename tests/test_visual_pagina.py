@@ -12,7 +12,6 @@ import pytest
 from conftest import make_desc2_config
 from termo.operation.config import load_operation_config
 from termo.operation.sheet_es import FIDELITY_WARNING
-from termo.operation.visual import graficas as g
 from termo.operation.visual.calculos import Posicion
 from termo.operation.visual.datos import DatosReporte
 from termo.operation.visual.narrativa import titulares
@@ -51,7 +50,13 @@ def test_a_self_contained_spanish_page(page: str) -> None:
     assert '<html lang="es"' in page and '<meta charset="utf-8">' in page
     assert page.count(PLOTLY_INICIO) == 1
     assert not RECURSO_EXTERNO.search(sin_plotlyjs(page))
-    assert "prefers-color-scheme: dark" in page and "@media print" in page
+    assert "@media print" in page
+
+
+def test_the_page_is_light_whatever_the_system_theme(page: str) -> None:
+    assert '<meta name="color-scheme" content="light">' in page
+    assert "color-scheme:light" in page
+    assert "prefers-color-scheme" not in sin_plotlyjs(page)
 
 
 def test_every_block_is_there_once_and_in_the_index(page: str) -> None:
@@ -163,7 +168,7 @@ def test_every_headline_is_on_the_page(datos: DatosReporte, page: str) -> None:
 
 
 def test_accent_text_is_dark_enough_on_the_light_paper(page: str) -> None:
-    # 'venta': the base hue on the dark paper, the darker tone on the light one
+    # 'venta': the base hue for fills, its darker tone for text on the paper
     assert '--acento:#e34948;--acento-texto-claro:#cc4241"' in page
     aviso = re.search(r"\.aviso\{[^}]*\}", page)
     assert aviso and "color:var(--tinta)" in aviso.group(0)
@@ -171,16 +176,11 @@ def test_accent_text_is_dark_enough_on_the_light_paper(page: str) -> None:
     assert re.search(r"h1\{[^}]*color:var\(--acento-texto\)", page)
 
 
-def test_the_page_script_recolours_every_y_axis_and_follows_x(page: str) -> None:
-    assert r"/^yaxis\d*$/" in page  # yaxis, yaxis2, yaxis3 ... all recoloured
-    assert "addListener" in page  # older Safari has no addEventListener on MediaQueryList
-    assert "plotly_relayout" in page and "ajustar_y" in page
-    assert "beforeprint" in page and "afterprint" in page and "Plotly.Plots.resize" in page
-
-
-def test_the_page_script_light_colours_are_the_figures_own() -> None:
-    assert f"'{g.TINTA}'" in SCRIPT_PAGINA and f"'{g.RETICULA}'" in SCRIPT_PAGINA
-    assert "__" not in SCRIPT_PAGINA  # every placeholder filled
+def test_the_page_script_follows_x_and_resizes_for_print() -> None:
+    assert "plotly_relayout" in SCRIPT_PAGINA and "ajustar_y" in SCRIPT_PAGINA
+    assert "beforeprint" in SCRIPT_PAGINA and "afterprint" in SCRIPT_PAGINA
+    assert "Plotly.Plots.resize" in SCRIPT_PAGINA
+    assert "matchMedia" not in SCRIPT_PAGINA  # no theme switching
 
 
 def test_print_uses_the_light_palette_without_buttons(page: str) -> None:

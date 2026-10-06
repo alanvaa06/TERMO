@@ -52,7 +52,7 @@ Spec 4 dejó las gráficas fuera. Este spec las añade. No cambia ningún criter
 
 ## 3. La página
 
-Scroll largo. Índice lateral fijo en escritorio, barra superior en móvil (< 768 px). Modo oscuro automático. CSS de impresión: sin índice, una gráfica por bloque sin cortes de página a la mitad.
+Scroll largo. Índice lateral fijo en escritorio, barra superior en móvil (< 768 px). Siempre en tema claro, aunque el sistema del lector esté en oscuro (decisión del usuario, 2026-10-06). CSS de impresión: sin índice, una gráfica por bloque sin cortes de página a la mitad.
 
 Colores de fase, fijos en todo el reporte: **rally fuerte** azul `#2a78d6`, **rally moderado** verde agua `#1baf7a`, **venta** rojo `#e34948`. Cada gráfica lleva número ("1.", "2.", …), título y "Fuente: FRED, TERMO" (más "Kim-Wright vía FRED" en la prima por plazo).
 
