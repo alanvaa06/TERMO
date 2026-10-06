@@ -32,3 +32,4 @@ data/cache/
 !trials/labels/*.csv
 !trials/**/labels/*.csv
 !trials/desc/**/*.csv
+!output/**/*.csv
