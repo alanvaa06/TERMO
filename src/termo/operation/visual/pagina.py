@@ -43,7 +43,7 @@ NOTA_POCOS = (
 NUMEROS = ("una", "dos", "tres", "cuatro", "cinco", "seis", "siete", "ocho", "nueve", "diez")
 CORTO = 12  # characters of the snapshot hash and the code commit shown on the page
 ANCLAS = (
-    "portada", "tasa-10a", "imitador", "motores", "motores-tiempo", "curva", "episodios",
+    "portada", "guia", "tasa-10a", "imitador", "motores", "motores-tiempo", "curva", "episodios",
     "transiciones", "macro", "validacion",
 )
 
@@ -107,6 +107,8 @@ table{border-collapse:collapse;width:100%;font-size:14px;margin:12px 0}
 th,td{padding:6px 10px;border-bottom:1px solid var(--filete);text-align:left}
 .descargo{border-left:3px solid var(--acento);padding:10px 16px;background:var(--tarjeta);
 margin:16px 0}
+dl.guia{margin:0}dl.guia dt{font-weight:600;margin-top:14px}
+dl.guia dd{margin:2px 0 0;color:var(--tinta-2)}
 footer{font-size:12px;color:var(--tinta-3);padding:32px 0;border-top:1px solid var(--filete)}
 @media (max-width:768px){.marco{grid-template-columns:minmax(0,1fr);gap:16px;padding:16px}
 nav{top:0;z-index:2;background:var(--papel);display:flex;overflow-x:auto;gap:14px;
@@ -333,6 +335,61 @@ def _seccion(seccion: Seccion, primero: int) -> tuple[str, int]:
     )
 
 
+def _dias_de(datos: DatosReporte, periodo: str) -> tuple[str, str] | None:
+    dias = datos.historia.index[datos.historia["periodo"] == periodo]
+    if not len(dias):
+        return None
+    return f"{dias[0]:%Y-%m-%d}", f"{dias[-1]:%Y-%m-%d}"
+
+
+def _guia(datos: DatosReporte) -> str:
+    """Fixed plain-language notes: phases, variables, surrogate, SHAP, holdout and shadow."""
+    holdout = _dias_de(datos, "holdout")
+    sombra = _dias_de(datos, "sombra")
+    semanas = datos.lectura["validation"]["sombra"]
+    ciclo = int(semanas["semanas"]) + int(semanas["proxima_evaluacion_semanas"])
+    apartados = (
+        "Los datos del holdout" if holdout is None
+        else f"Del {holdout[0]} al {holdout[1]} los datos"
+    )
+    desde = "" if sombra is None else f" desde el {sombra[0]}"
+    entradas = (
+        ("Fases",
+         "Cada día recibe una de tres fases según cómo se movió la curva en los 1 a 9 meses "
+         "anteriores: rally fuerte y rally moderado cuando las tasas bajaron, más o menos "
+         "rápido, y venta cuando subieron. Un modelo estadístico (jump model) asigna la fase "
+         "y castiga los cambios frecuentes, por eso una fase dura semanas o meses. La fase "
+         "describe los meses previos; no dice qué viene."),
+        ("Variables",
+         "El modelo no ve el nivel de las tasas. Ve 139 variables, y cada una compara un "
+         "movimiento reciente con los últimos 6 o 12 meses: vale 0 si es el menor de ese "
+         "periodo y 1 si es el mayor. Cubren el cambio de cada plazo (1A a 30A) en ventanas "
+         "de 1 a 9 meses, el cambio de las pendientes (1s5s, 3s10s, 10s30s) y de la "
+         "curvatura, y la volatilidad de 21 días de cada plazo. No usan datos macro; el "
+         "panel macro es solo contexto."),
+        ("Imitador y confianza",
+         "Un segundo modelo (XGBoost) aprende a reproducir la fase con las mismas variables. "
+         "Su probabilidad es la confianza de la portada, y acierta menos de lo que dice (ver "
+         "la nota bajo los indicadores). Existe para poder explicar la fase."),
+        ("Contribuciones SHAP",
+         "Reparten la lectura del imitador entre seis grupos de variables. Un valor positivo "
+         "empuja hacia la fase de hoy y uno negativo en contra. La escala es log-odds: la "
+         "base más la suma de los grupos da la lectura. «Movimiento tramo medio (5A-7A)» "
+         "son los cambios recientes del 5A y el 7A, no su nivel."),
+        ("Holdout y sombra",
+         f"{apartados} se apartaron al construir el modelo y se usaron una sola vez, "
+         "para probarlo con días que no había visto. Esa prueba ya se hizo y los nombres de "
+         "las fases se eligieron después, así que el holdout ya no es evidencia limpia. Los "
+         f"nombres se validan con la sombra: lecturas semanales{desde}, con el modelo sin "
+         f"cambios, que se evalúan cada {ciclo} semanas."),
+    )
+    filas = "".join(f"<dt>{_e(t)}</dt><dd>{_e(d)}</dd>" for t, d in entradas)
+    return (
+        '<section id="guia"><p class="kicker">Guía</p><h2>Cómo leer este reporte</h2>'
+        f'<dl class="guia">{filas}</dl></section>'
+    )
+
+
 def _validacion(datos: DatosReporte, titular: Titular) -> str:
     validacion = datos.lectura["validation"]
     sombra = validacion["sombra"]
@@ -390,6 +447,8 @@ def render(datos: DatosReporte, generado: str) -> str:
     numero = 1
     cuerpos: list[str] = [_portada(datos, textos["portada"])]
     indice = [("portada", "Portada")]
+    cuerpos.append(_guia(datos))
+    indice.append(("guia", "Cómo leer"))
     for seccion in _secciones(datos, textos):
         cuerpo, numero = _seccion(seccion, numero)
         cuerpos.append(cuerpo)

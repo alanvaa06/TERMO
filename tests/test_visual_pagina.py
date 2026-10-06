@@ -300,3 +300,20 @@ def test_the_holdout_band_is_named_under_the_ten_year_chart(page: str) -> None:
 def test_verdicts_live_in_the_headline_only(page: str) -> None:
     validacion = _seccion(page, "validacion")
     assert "Veredictos registrados" not in validacion and "diagnostic:" not in validacion
+
+
+def test_the_reading_guide_follows_the_cover(datos: DatosReporte, page: str) -> None:
+    assert page.index('<section id="portada"') < page.index('<section id="guia"')
+    assert page.index('<section id="guia"') < page.index('<section id="tasa-10a"')
+    guia = _seccion(page, "guia")
+    for termino in ("Fases", "Variables", "Imitador y confianza", "Contribuciones SHAP",
+                    "Holdout y sombra"):
+        assert f"<dt>{termino}</dt>" in guia
+    holdout = datos.historia.index[datos.historia["periodo"] == "holdout"]
+    sombra = datos.historia.index[datos.historia["periodo"] == "sombra"]
+    assert f"Del {holdout[0]:%Y-%m-%d} al {holdout[-1]:%Y-%m-%d}" in guia
+    assert f"desde el {sombra[0]:%Y-%m-%d}" in guia
+    ciclo = datos.lectura["validation"]["sombra"]
+    assert f"cada {ciclo['semanas'] + ciclo['proxima_evaluacion_semanas']} semanas" in guia
+    assert "139 variables" in guia and "no su nivel" in guia
+    assert '<a href="#guia">Cómo leer</a>' in page

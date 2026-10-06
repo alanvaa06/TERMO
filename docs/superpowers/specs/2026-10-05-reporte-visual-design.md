@@ -71,6 +71,8 @@ Colores de fase, fijos en todo el reporte: **rally fuerte** azul `#2a78d6`, **ra
 | 9 | Validación | Titular con los veredictos y semanas de sombra ("Diagnóstico APTO y holdout APTO; 1 semana de sombra"). Tarjetas: veredictos registrados, recall y duración mediana por fase, semanas de sombra y próxima evaluación. Descargo fijo y visible: "TERMO describe la fase actual de la curva. No anticipa la tasa a 10 años: en 62 pruebas registradas las fases no superaron a la inercia." También "Nombres de fase elegidos tras el holdout; los valida solo la sombra." | — |
 | 10 | Comentario del analista | Solo si existe `output/<fecha>/comentario.md`, convertido con `md_to_html`. Rotulado "Comentario del analista (no generado por TERMO)" | — |
 
+Después de la portada va una guía fija, "Cómo leer este reporte" (añadida 2026-10-06 a pedido del usuario): cinco definiciones breves en lenguaje llano de fases, variables, imitador y confianza, contribuciones SHAP, y holdout y sombra. Las fechas del holdout y de la sombra y el ciclo de evaluación salen de los datos.
+
 Leyenda obligatoria en 5b, 6 y 7: **"Frecuencias del pasado, no pronóstico. Incluye el periodo holdout, ya abierto."**
 
 ---
