@@ -10,3 +10,4 @@
 - [2026-10-05]: corrida de exp2 reanudada tras corte (8/33 -> 33/33), reporte publicado: NO-GO en ambas familias; pendiente decision del usuario sobre el rumbo.
 - [2026-10-05]: spec 3 descriptivo: brainstorming, plan, ejecucion, registro, diagnostico pre-holdout APTO; pendiente aprobacion del usuario para abrir el holdout (una sola vez).
 - [2026-10-05]: holdout descriptivo abierto con aprobacion: NO-APTO solo por D4 (forma de curva); pendiente decision del usuario sobre como llevarlo al comite y modo sombra.
+- [2026-10-05]: desc2 registrado, corrido, reportado y con holdout 'ya visto'; primeras lecturas generadas; pendiente spec 4 (snapshot semanal, hoja en espanol, modo sombra) y merge a main.

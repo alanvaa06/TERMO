@@ -1,0 +1,116 @@
+{
+  "date": "2023-06-30",
+  "phase": 2,
+  "phase_name": "venta",
+  "days_in_phase": 8,
+  "episode_start": "2023-06-21",
+  "probabilities": {
+    "rally fuerte": 0.0029261902,
+    "rally moderado": 0.0008242309,
+    "venta": 0.9962496
+  },
+  "confidence": 0.9962496,
+  "surrogate_agrees": true,
+  "low_confidence": false,
+  "drivers": [
+    {
+      "block": "nivel medio",
+      "contribution": 1.455075267702341
+    },
+    {
+      "block": "nivel corto",
+      "contribution": 0.5320584442233667
+    },
+    {
+      "block": "pendientes",
+      "contribution": 0.5017183230083901
+    }
+  ],
+  "top_variables": [
+    {
+      "variable": "d5_63_r252",
+      "contribution": 1.0454134941101074
+    },
+    {
+      "variable": "d5_84_r126",
+      "contribution": 0.23201043903827667
+    },
+    {
+      "variable": "d30_126_r126",
+      "contribution": -0.20886875689029694
+    },
+    {
+      "variable": "d3_63_r126",
+      "contribution": 0.1800638884305954
+    },
+    {
+      "variable": "d5_84_r252",
+      "contribution": -0.17587964236736298
+    }
+  ],
+  "drivers_validated": true,
+  "validation": {
+    "diagnostic": "apto",
+    "holdout": "apto",
+    "failed_checks": [],
+    "fidelity_failed": false,
+    "by_phase": [
+      {
+        "days": 19,
+        "direction_share": 0.8947368421052632,
+        "episodes": 1,
+        "evaluable": false,
+        "median_duration_days": 19.0,
+        "name": "rally fuerte",
+        "phase": 0,
+        "recall": 0.5789473684210527
+      },
+      {
+        "days": 198,
+        "direction_share": 0.7070707070707071,
+        "episodes": 1,
+        "evaluable": true,
+        "median_duration_days": 198.0,
+        "name": "rally moderado",
+        "phase": 1,
+        "recall": 0.7222222222222222
+      },
+      {
+        "days": 282,
+        "direction_share": 0.9148936170212766,
+        "episodes": 2,
+        "evaluable": true,
+        "median_duration_days": 141.0,
+        "name": "venta",
+        "phase": 2,
+        "recall": 0.9645390070921985
+      }
+    ],
+    "registered_verdicts": [
+      {
+        "stage": "diagnostic",
+        "verdict": "apto"
+      },
+      {
+        "stage": "holdout",
+        "verdict": "apto"
+      }
+    ],
+    "holdout_seen_by": "desc_k3 (trials/desc), opened 2026-10-05, verdict no-apto by D4 only"
+  },
+  "generated_with": {
+    "code_commit": "39b4c8bbc2cfa9dab769ae5e129bb8ccd903ec30.11bd33cae642b93768b694b02a7b49f18cd40c12.0bc700641939a01b2d9632b6a65563ca6117cdbc",
+    "registered_code_commit": "39b4c8bbc2cfa9dab769ae5e129bb8ccd903ec30.11bd33cae642b93768b694b02a7b49f18cd40c12.0bc700641939a01b2d9632b6a65563ca6117cdbc",
+    "environment": {
+      "numpy": "2.5.3",
+      "pandas": "3.0.6",
+      "scipy": "1.18.1",
+      "scikit-learn": "1.9.1",
+      "jumpmodels": "0.1.1",
+      "xgboost": "3.4.1",
+      "shap": "0.52.0",
+      "python": "3.14.2"
+    }
+  },
+  "disclaimer": "TERMO describes the current phase of the curve. It does not anticipate the 10Y: in 62 registered trials the phases did not beat inertia."
+}
