@@ -243,8 +243,41 @@ def alert_for(
 @dataclass(frozen=True, eq=False)
 class ShadowRun:
     record: dict[str, Any]
+    curve: pd.DataFrame  # the whole curve of the snapshot, shadow days included
     analysis: Analysis  # the whole recomputed history, shadow days included
     sheet_path: Path
+
+
+def _registered_recipe(model_log: TrialLog, config: CoreConfig) -> tuple[str, ...]:
+    """The registered columns, after refusing any other configuration or column set."""
+    verify_configuration(model_log, config)
+    columns = registered_columns(model_log)
+    if tuple(recipe_for(config).names) != columns:
+        raise TrialLogError("the registered columns are not the ones this configuration builds")
+    return columns
+
+
+def _recompute(
+    config: CoreConfig, columns: tuple[str, ...], snapshot_dir: Path
+) -> tuple[pd.DataFrame, Analysis]:
+    """Every daily output on the whole curve of `snapshot_dir`, the frozen map as registered."""
+    curve = load_curve(
+        snapshot_dir, config.series, config.start, config.holdout_start, final_evaluation=True
+    )
+    data = prepare(curve, config, columns)
+    return curve, frozen_as_registered(analyse(data), data)
+
+
+def latest_analysis(
+    config: CoreConfig, model_log: TrialLog, snapshot_dir: Path
+) -> tuple[pd.DataFrame, Analysis]:
+    """The curve and the recomputed history of a snapshot, as a shadow run computes them.
+
+    The stages that need the latest outputs without logging a reading (the monthly report,
+    the shadow evaluation, the exports) recompute them this way: minutes on real data,
+    and the same code path as the shadow run, so there is one set of outputs per snapshot.
+    """
+    return _recompute(config, _registered_recipe(model_log, config), snapshot_dir)
 
 
 def _registered_labels(log: TrialLog, trials_dir: Path) -> tuple[pd.Series, pd.Series]:
@@ -279,21 +312,14 @@ def run_shadow(
     desc = config.descriptive
     if desc is None:
         raise TrialLogError("this configuration has no descriptive section")
-    verify_configuration(model_log, config)
-    columns = registered_columns(model_log)
-    if tuple(recipe_for(config).names) != columns:
-        raise TrialLogError("the registered columns are not the ones this configuration builds")
+    columns = _registered_recipe(model_log, config)
     validation = validation_from_log(model_log, config)
     shadow_log = ShadowLog(trials_dir / SHADOW_DIR / SHADOW_LOG_FILE)
     run_at = shadow_log.clock()
     pre_labels, hold_labels = _registered_labels(model_log, trials_dir)
     pre_end, hold_end = pre_labels.index[-1], hold_labels.index[-1]
 
-    curve = load_curve(
-        snapshot_dir, config.series, config.start, config.holdout_start, final_evaluation=True
-    )
-    data = prepare(curve, config, columns)
-    analysis = frozen_as_registered(analyse(data), data)
+    curve, analysis = _recompute(config, columns, snapshot_dir)
     history = history_check(analysis, model_log, trials_dir, pre_end, hold_end)
 
     day = reading_date(analysis.labels.index)
@@ -349,4 +375,4 @@ def run_shadow(
     write_files(contents, files_dir)
     sheet_path = write_sheet(record, op, sheets_dir)
     echo(f"[ok] hoja -> {sheet_path.as_posix()}")
-    return ShadowRun(record=record, analysis=analysis, sheet_path=sheet_path)
+    return ShadowRun(record=record, curve=curve, analysis=analysis, sheet_path=sheet_path)
