@@ -61,8 +61,9 @@ def test_a_snapshot_that_is_not_the_sheets_is_refused(tmp_path: Path) -> None:
 def test_a_missing_required_file_is_named(tmp_path: Path, archivo: str) -> None:
     _, salida, snapshot = en_disco(tmp_path)
     (salida / archivo).unlink()
-    with pytest.raises(FileNotFoundError, match=archivo.replace(".", r"\.")):
+    with pytest.raises(FileNotFoundError, match=archivo.replace(".", r"\.")) as error:
         _cargar(salida, snapshot)
+    assert str(error.value).isascii()
 
 
 def test_a_history_that_does_not_end_on_the_reading_date_is_refused(tmp_path: Path) -> None:
@@ -72,5 +73,18 @@ def test_a_history_that_does_not_end_on_the_reading_date_is_refused(tmp_path: Pa
         "%Y-%m-%d"
     )
     (salida / "hoja.json").write_text(json.dumps(hoja), encoding="utf-8")
-    with pytest.raises(ValueError, match="la historia termina"):
+    with pytest.raises(ValueError, match="la historia termina") as error:
         _cargar(salida, snapshot)
+    assert str(error.value).isascii()
+
+
+def test_a_csv_from_another_run_is_refused(tmp_path: Path) -> None:
+    _, salida, snapshot = en_disco(tmp_path)
+    path = salida / "episodios.csv"
+    first, rest = path.read_bytes().split(b"\n", 1)
+    assert first.startswith(b"# snapshot_hash=")
+    path.write_bytes(b"# snapshot_hash=" + b"e" * 64 + b"\n" + rest)
+    with pytest.raises(ValueError, match="otra corrida") as error:
+        _cargar(salida, snapshot)
+    message = str(error.value)
+    assert message.isascii() and "episodios.csv" in message and "eeeeeeeeeeee" in message

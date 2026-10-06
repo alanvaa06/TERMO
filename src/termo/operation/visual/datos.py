@@ -55,8 +55,20 @@ class DatosReporte:
         return lectura
 
 
-def _csv(path: Path, fechas: Sequence[str]) -> pd.DataFrame:
-    table = pd.read_csv(path, comment="#", parse_dates=list(fechas))
+HUELLA = "# snapshot_hash="
+
+
+def _csv(path: Path, esperada: str, fechas: Sequence[str]) -> pd.DataFrame:
+    """A CSV of the export, read only when its first line names the sheet's snapshot."""
+    with path.open(encoding="utf-8") as handle:
+        primera = handle.readline().strip()
+    if primera != f"{HUELLA}{esperada}":
+        encontrada = primera.removeprefix(HUELLA)
+        raise ValueError(
+            f"{path.name} es de otra corrida (snapshot {encontrada[:12]}, la hoja dice "
+            f"{esperada[:12]})"
+        )
+    table = pd.read_csv(path, skiprows=2, parse_dates=list(fechas))
     for column in fechas:
         table[column] = table[column].dt.as_unit("ns")
     return table
@@ -69,6 +81,9 @@ def cargar(
     faltan = [name for name in REQUERIDOS if not (dir_salida / name).exists()]
     if faltan:
         raise FileNotFoundError(f"faltan {faltan} en {dir_salida.as_posix()}")
+    desc = config.descriptive
+    if desc is None:
+        raise ValueError("la configuracion del modelo no es descriptiva")
     hoja: dict[str, Any] = json.loads((dir_salida / HOJA).read_text(encoding="utf-8"))
     huella = snapshot_hash(dir_snapshot)
     esperada = str(hoja["snapshot_hash"])
@@ -77,10 +92,7 @@ def cargar(
             f"el snapshot {dir_snapshot.as_posix()} ({huella[:12]}) no es el de la hoja "
             f"({esperada[:12]})"
         )
-    desc = config.descriptive
-    if desc is None:
-        raise ValueError("la configuracion del modelo no es descriptiva")
-    historia = _csv(dir_salida / HISTORIA, ["fecha"]).set_index("fecha")
+    historia = _csv(dir_salida / HISTORIA, esperada, ["fecha"]).set_index("fecha")
     fecha = pd.Timestamp(hoja["reading_date"]).as_unit("ns")
     if historia.index[-1] != fecha:
         raise ValueError(
@@ -96,8 +108,8 @@ def cargar(
         fecha=fecha,
         hoja=hoja,
         historia=historia,
-        episodios=_csv(dir_salida / EPISODIOS, ["inicio", "fin"]),
-        macro=_csv(dir_salida / MACRO, ["fecha"]).set_index("fecha"),
+        episodios=_csv(dir_salida / EPISODIOS, esperada, ["inicio", "fin"]),
+        macro=_csv(dir_salida / MACRO, esperada, ["fecha"]).set_index("fecha"),
         curva=curva,
         nombres=tuple(desc.phase_names),
         bloques=tuple(name for name, _ in desc.blocks),

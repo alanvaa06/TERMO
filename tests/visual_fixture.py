@@ -1,8 +1,9 @@
 """A small, consistent input for the visual report tests: in memory and on disk.
 
-700 business days from 1990 with seven episodes, the last one an open 'venta'; the
-surrogate disagrees with the jump model one day in fifty; the last 200 days are the
-holdout and the last 2 the shadow, as in the real export.
+700 labelled business days with seven episodes, the last one an open 'venta'; the curve
+and the macro series start PRE_HISTORIA days before the history, as the real ones start
+years before it; the surrogate disagrees with the jump model one day in fifty; the last
+200 days are the holdout and the last 2 the shadow, as in the real export.
 """
 
 from __future__ import annotations
@@ -17,7 +18,9 @@ from plotly.offline import get_plotlyjs
 
 from conftest import FRED_URL_TEMPLATE, TENORS, fake_fred, make_curve, make_macro
 from termo.data.snapshot import snapshot_hash, write_snapshot
-from termo.operation.config import load_operation_config
+from termo.operation.config import OperationConfig, load_operation_config
+from termo.operation.exports import _macro
+from termo.operation.macro import macro_panel
 from termo.operation.monthly import episodes
 from termo.operation.visual.calculos import columna_probabilidad
 from termo.operation.visual.datos import DatosReporte, SerieMacro
@@ -26,7 +29,8 @@ REPO = Path(__file__).resolve().parents[1]
 OP_CONFIG = REPO / "configs" / "operacion.yaml"
 NOMBRES = ("rally fuerte", "rally moderado", "venta")
 BLOQUES = ("nivel corto", "nivel medio", "nivel largo", "pendientes", "curvatura", "volatilidad")
-N_DIAS = 700
+N_DIAS = 700  # labelled days
+PRE_HISTORIA = 60  # curve (and macro) days before the first labelled day
 RACHAS = ((0, 60), (2, 90), (1, 70), (2, 120), (0, 40), (1, 100))  # then 'venta' to the end
 VENTA = 2
 HOLDOUT_DIAS, SOMBRA_DIAS = 200, 2
@@ -45,7 +49,7 @@ def _iso(index: pd.Index) -> list[str]:
 
 
 def curva_sintetica() -> pd.DataFrame:
-    curve, _ = make_curve(N_DIAS, seed=1)
+    curve, _ = make_curve(N_DIAS + PRE_HISTORIA, seed=1)
     curva = curve.round(4)
     curva.index = pd.DatetimeIndex(curva.index).as_unit("ns")
     return curva
@@ -60,7 +64,7 @@ def fases_sinteticas(index: pd.DatetimeIndex) -> pd.Series:
 
 
 def historia_sintetica(curva: pd.DataFrame) -> pd.DataFrame:
-    index = pd.DatetimeIndex(curva.index, name="fecha")
+    index = pd.DatetimeIndex(curva.index[-N_DIAS:], name="fecha")
     fases = fases_sinteticas(index)
     n = len(index)
     posicion = np.arange(n)
@@ -94,7 +98,8 @@ def episodios_sinteticos(historia: pd.DataFrame, curva: pd.DataFrame) -> pd.Data
     return table
 
 
-def macro_sintetica(curva: pd.DataFrame) -> pd.DataFrame:
+def _macro_valores(curva: pd.DataFrame) -> pd.DataFrame:
+    """The two macro series on the curve's business days, holes where the source has none."""
     crudo = make_macro(curva)
     prima = crudo["THREEFYTP10"].reindex(curva.index)
     prima[prima.index.dayofweek != 4] = np.nan  # weekly, as Kim-Wright arrives
@@ -104,15 +109,29 @@ def macro_sintetica(curva: pd.DataFrame) -> pd.DataFrame:
     return table
 
 
+def macro_sintetica(curva: pd.DataFrame, op: OperationConfig | None = None) -> pd.DataFrame:
+    """macro.csv as the export builds it: value, 10y percentile and 21d change per series."""
+    op = op or load_operation_config(OP_CONFIG)
+    table = _macro(_macro_valores(curva), op)
+    table["fecha"] = pd.DatetimeIndex(pd.to_datetime(table["fecha"])).as_unit("ns")
+    return table.set_index("fecha")
+
+
 def hoja_sintetica(
-    historia: pd.DataFrame, episodios: pd.DataFrame, huella: str
+    historia: pd.DataFrame,
+    episodios: pd.DataFrame,
+    huella: str,
+    macro: pd.DataFrame | None = None,
+    op: OperationConfig | None = None,
 ) -> dict[str, Any]:
     fecha = _iso(historia.index[-1:])[0]
     actual = episodios.iloc[-1]
     fila = historia.iloc[-1]
-    drivers = sorted(
+    op = op or load_operation_config(OP_CONFIG)
+    macro = macro if macro is not None else macro_sintetica(curva_sintetica(), op)
+    drivers = sorted(  # by absolute contribution, as reading.py does (stable)
         ({"block": b, "contribution": float(fila[b])} for b in BLOQUES),
-        key=lambda d: -float(d["contribution"]),
+        key=lambda d: -abs(float(d["contribution"])),
     )[:3]
     return {
         "kind": "reading",
@@ -122,26 +141,7 @@ def hoja_sintetica(
         "run_at": GENERADO,
         "code_commit": "test-commit-visual",
         "alert": None,
-        "macro": [
-            {
-                "serie": "prima por plazo 10 anos (Kim-Wright)",
-                "valor": 1.02,
-                "fecha_valor": fecha,
-                "percentil_10a": 0.97,
-                "cambio_21d": 0.18,
-                "dias_de_ventana": 2520,
-                "nota": "",
-            },
-            {
-                "serie": "DGS2 - fed funds efectiva",
-                "valor": 0.5,
-                "fecha_valor": fecha,
-                "percentil_10a": 0.4,
-                "cambio_21d": -0.05,
-                "dias_de_ventana": 2520,
-                "nota": "",
-            },
-        ],
+        "macro": macro_panel(macro, op, historia.index[-1].date()),
         "reading": {
             "date": fecha,
             "phase": VENTA,
@@ -199,12 +199,13 @@ def make_datos(huella: str = HUELLA_FALSA, comentario: str | None = None) -> Dat
     curva = curva_sintetica()
     historia = historia_sintetica(curva)
     episodios = episodios_sinteticos(historia, curva)
+    macro = macro_sintetica(curva, op)
     return DatosReporte(
         fecha=pd.Timestamp(historia.index[-1]),
-        hoja=hoja_sintetica(historia, episodios, huella),
+        hoja=hoja_sintetica(historia, episodios, huella, macro, op),
         historia=historia,
         episodios=episodios,
-        macro=macro_sintetica(curva),
+        macro=macro,
         curva=curva,
         nombres=NOMBRES,
         bloques=BLOQUES,
