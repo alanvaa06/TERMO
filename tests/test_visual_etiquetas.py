@@ -9,7 +9,7 @@ import pytest
 from termo.config import load_config
 from termo.dataset import recipe_for
 from termo.features.tyccles import TycclesRecipe
-from termo.operation.visual.etiquetas import bloque_es, variable_es
+from termo.operation.visual.etiquetas import BLOQUES, bloque_es, variable_es
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -57,3 +57,16 @@ def test_every_variable_of_the_registered_recipe_is_translated() -> None:
 def test_an_unknown_variable_is_refused(nombre: str) -> None:
     with pytest.raises(ValueError, match="variable"):
         variable_es(nombre)
+
+
+def test_hardcoded_label_texts_match_the_registry() -> None:
+    """'volatilidad 21d' and the tenor ranges in the block labels come from desc2.yaml."""
+    config = load_config(REPO / "configs" / "desc2.yaml")
+    recipe = recipe_for(config)
+    assert isinstance(recipe, TycclesRecipe) and recipe.vol_window == 21
+    assert config.descriptive is not None
+    blocks = dict(config.descriptive.blocks)
+    assert set(blocks) == set(BLOQUES)
+    for name in ("nivel corto", "nivel medio", "nivel largo"):
+        first, last = blocks[name][0][1:], blocks[name][-1][1:]
+        assert bloque_es(name).endswith(f"({first}A-{last}A)")
