@@ -34,6 +34,6 @@ data/cache/
 !trials/desc/**/*.csv
 !output/**/*.csv
 
-# The visual report is derived (~6-7 MB with Plotly embedded): rebuild it with
+# The visual report is derived (~8 MB with Plotly embedded): rebuild it with
 # `python run_termo.py --solo-reporte output/<fecha> --snapshot data/snapshots/<fecha>`
 output/**/reporte.html

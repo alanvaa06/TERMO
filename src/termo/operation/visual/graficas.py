@@ -16,7 +16,7 @@ from plotly.subplots import make_subplots
 from termo.operation.monthly import transitions
 from termo.operation.visual import calculos
 from termo.operation.visual.datos import DatosReporte, SerieMacro
-from termo.operation.visual.etiquetas import bloque_es, variable_es
+from termo.operation.visual.etiquetas import PLAZOS, bloque_es, variable_es
 
 COLORES_FASE = ("#2a78d6", "#1baf7a", "#e34948")
 # The same hues darkened until text reaches WCAG 4.5:1 on the light page (#fbfaf7):
@@ -37,8 +37,6 @@ GRISES_CURVA = (("hace 1m", "dot", 2.4), ("hace 3m", "dash", 1.6),
 # Neutral (blue is 'rally fuerte'). Capped at 0.6 so the cell text, in the page's font
 # colour, keeps >= 3.8:1 on the darkest cell in both modes (0.85 drops to 2.5 in dark).
 RAMPA_TRANSICION = [[0.0, "rgba(137,135,129,0.08)"], [1.0, "rgba(137,135,129,0.6)"]]
-PLAZOS = {"DGS1": "1A", "DGS2": "2A", "DGS3": "3A", "DGS5": "5A", "DGS7": "7A",
-          "DGS10": "10A", "DGS30": "30A"}
 ALTO = 380
 TRANSPARENTE = "rgba(0,0,0,0)"
 MARGEN_SELECTOR = 84  # top margin of a chart with a range selector: legend row + button row
@@ -200,7 +198,6 @@ def _sombrear_holdout(fig: go.Figure, historia: pd.DataFrame) -> None:
             x0=_dias(dias[:1])[0], x1=_dias(dias[-1:])[0], fillcolor=GRIS, opacity=0.10,
             line_width=0, layer="below",
         )
-
 
 
 def _sombrear_fases(fig: go.Figure, episodios: pd.DataFrame) -> None:

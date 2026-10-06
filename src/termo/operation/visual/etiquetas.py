@@ -26,6 +26,15 @@ HORIZONTES: dict[str, str] = {
     "189": "9m",
 }
 VENTANAS: dict[str, str] = {"126": "6m", "252": "1a"}
+PLAZOS: dict[str, str] = {
+    "DGS1": "1A",
+    "DGS2": "2A",
+    "DGS3": "3A",
+    "DGS5": "5A",
+    "DGS7": "7A",
+    "DGS10": "10A",
+    "DGS30": "30A",
+}
 MEDIDAS: dict[str, str] = {
     "s12m5s": "pendiente 1s5s",
     "s3s10": "pendiente 3s10s",

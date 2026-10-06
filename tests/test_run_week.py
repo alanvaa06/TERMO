@@ -161,14 +161,27 @@ def test_the_report_alone_is_rebuilt_from_the_files(
 
 
 def test_the_report_alone_refuses_download_mes_and_a_foreign_snapshot(
-    here: Path, capsys: pytest.CaptureFixture[str], tmp_path: Path
+    here: Path,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     assert main(["--snapshot", str(SNAPSHOT)]) == 0
     capsys.readouterr()
     out = Path("output") / str(_shadow_log().readings()[-1]["reading_date"])
+
+    def no_network(*_: object) -> Path:
+        raise AssertionError("--solo-reporte must not download")
+
+    monkeypatch.setattr("termo.run_week.download_snapshot", no_network)
     with pytest.raises(SystemExit):
         main(["--solo-reporte", str(out), "--download"])
     assert "--solo-reporte" in capsys.readouterr().err
+    with pytest.raises(SystemExit):
+        main(["--solo-reporte", str(out), "--snapshot", str(SNAPSHOT), "--output", "otra"])
+    error = capsys.readouterr().err
+    assert "--solo-reporte" in error and "--output" in error and error.isascii()
+    assert not Path("otra").exists()
     with pytest.raises(SystemExit):
         main(["--solo-reporte", str(out), "--snapshot", str(SNAPSHOT), "--mes", "1999-03"])
     assert "--solo-reporte" in capsys.readouterr().err
@@ -182,3 +195,23 @@ def test_the_report_alone_refuses_download_mes_and_a_foreign_snapshot(
         main(["--solo-reporte", str(foreign), "--snapshot", str(SNAPSHOT)])
     error = capsys.readouterr().err
     assert "snapshot" in error and error.isascii()
+
+
+def test_a_report_failure_after_the_run_says_how_to_rebuild_it(
+    here: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def falla(*_: object) -> Path:
+        raise ValueError("hoja.json sin campo")
+
+    monkeypatch.setattr("termo.run_week.construir", falla)
+    before = len(_shadow_log().readings())
+    assert main(["--snapshot", str(SNAPSHOT)]) == 1  # not argparse's usage error (2)
+    captured = capsys.readouterr()
+    (record,) = _shadow_log().readings()[before:]  # the reading is logged all the same
+    out = Path("output") / str(record["reading_date"])
+    assert captured.err.isascii() and "usage:" not in captured.err
+    assert captured.err.strip() == (
+        f"[x] reporte: hoja.json sin campo; rebuild with --solo-reporte {out.as_posix()} "
+        f"--snapshot {SNAPSHOT.as_posix()}"
+    )
+    assert "[ok] reporte" not in captured.out

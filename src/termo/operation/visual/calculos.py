@@ -18,6 +18,7 @@ from termo.validation.metrics import BP_PER_PERCENT
 DIAS_MES = 21
 DIAS_ANIO = 252
 TOLERANCIA_PARALELO_PB = 1.0
+MIN_EPISODIOS_BANDA = 4  # below this, quartiles of the finished episodes say little
 ATRAS: dict[str, int] = {
     "hoy": 0,
     "hace 1m": DIAS_MES,
@@ -47,7 +48,9 @@ class Posicion:
 
     @property
     def relativa(self) -> str | None:
-        if self.p25 is None or self.p75 is None:
+        """Today against the P25-P75 range; None below MIN_EPISODIOS_BANDA, as the cover's
+        thermometer then shows no band."""
+        if self.p25 is None or self.p75 is None or self.episodios < MIN_EPISODIOS_BANDA:
             return None
         if self.dias > self.p75:
             return "por encima"

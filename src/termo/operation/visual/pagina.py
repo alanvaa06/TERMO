@@ -20,7 +20,7 @@ from termo.operation.config import OperationConfig
 from termo.operation.html_report import md_to_html, write_html
 from termo.operation.sheet_es import FIDELITY_WARNING, SEEN_BY_NOTE
 from termo.operation.visual import graficas as g
-from termo.operation.visual.calculos import Posicion, posicion_duracion
+from termo.operation.visual.calculos import MIN_EPISODIOS_BANDA, Posicion, posicion_duracion
 from termo.operation.visual.datos import DatosReporte, cargar
 from termo.operation.visual.narrativa import Titular, titulares
 
@@ -34,10 +34,12 @@ NOTA_MOTORES = (
     "Cada día explica su propia fase (log-odds); cuando cambia la fase, cambia lo que se explica."
 )
 GUION = "-"
-MIN_EPISODIOS_BANDA = 4  # below this, quartiles of the finished episodes say little
 NOTA_POCOS = (
-    "Con menos de 4 episodios terminados no se muestra el rango intercuartil, solo la mediana."
+    f"Con menos de {MIN_EPISODIOS_BANDA} episodios terminados no se muestra el rango "
+    "intercuartil, solo la mediana."
 )
+NUMEROS = ("una", "dos", "tres", "cuatro", "cinco", "seis", "siete", "ocho", "nueve", "diez")
+CORTO = 12  # characters of the snapshot hash and the code commit shown on the page
 ANCLAS = (
     "portada", "tasa-10a", "imitador", "motores", "motores-tiempo", "curva", "episodios",
     "transiciones", "macro", "validacion",
@@ -125,8 +127,8 @@ SCRIPT_PAGINA = r"""
 (function(){var q=window.matchMedia('(prefers-color-scheme: dark)');
 function graficas(){
 return Array.prototype.slice.call(document.querySelectorAll('.js-plotly-plot'));}
-function colorear(oscuro){var t=oscuro?'#c3c2b7':'#4a4843',
-r=oscuro?'rgba(255,255,255,0.10)':'rgba(137,135,129,0.18)';
+function colorear(oscuro){var t=oscuro?'#c3c2b7':'__TINTA__',
+r=oscuro?'rgba(255,255,255,0.10)':'__RETICULA__';
 graficas().forEach(function(el){var c={'font.color':t};
 Object.keys(el.layout).forEach(function(k){if(/^yaxis\d*$/.test(k))c[k+'.gridcolor']=r;});
 Plotly.relayout(el,c);});}
@@ -150,7 +152,7 @@ window.addEventListener('load',function(){graficas().forEach(seguirX);if(q.match
 if(q.addEventListener)q.addEventListener('change',cambio);else q.addListener(cambio);
 window.addEventListener('beforeprint',function(){colorear(false);redibujar();});
 window.addEventListener('afterprint',function(){cambio();redibujar();});})();
-"""
+""".replace("__TINTA__", g.TINTA).replace("__RETICULA__", g.RETICULA)
 
 
 @dataclass(frozen=True)
@@ -182,6 +184,18 @@ def _num(valor: float | None, decimales: int = 2) -> str:
     return GUION if valor is None else f"{float(valor):.{decimales}f}"
 
 
+def _titulo_variables(n: int) -> str:
+    """'Las cinco variables ...' from the sheet's count; digits past ten."""
+    if n == 1:
+        return "La variable de mayor contribución"
+    cuantas = NUMEROS[n - 1] if 1 <= n <= len(NUMEROS) else str(n)
+    return f"Las {cuantas} variables de mayor contribución"
+
+
+def _corto(valor: object) -> str:
+    return str(valor)[:CORTO]
+
+
 def _secciones(datos: DatosReporte, textos: dict[str, Titular]) -> list[Seccion]:
     macro = tuple(
         Grafica(s.etiqueta, g.fig_macro(datos, s), FUENTE_MACRO) for s in datos.series_macro
@@ -197,7 +211,7 @@ def _secciones(datos: DatosReporte, textos: dict[str, Titular]) -> list[Seccion]
         Seccion("motores", "Motores de hoy", textos["motores"],
                 (Grafica("Contribución SHAP por bloque a la lectura de hoy",
                          g.fig_motores_hoy(datos)),
-                 Grafica("Las cinco variables de mayor contribución",
+                 Grafica(_titulo_variables(len(datos.lectura["top_variables"])),
                          g.fig_variables_hoy(datos))),
                 aviso=aviso_motores),
         Seccion("motores-tiempo", "Motores en el tiempo", textos["motores-tiempo"],
@@ -305,7 +319,8 @@ def _portada(datos: DatosReporte, titular: Titular) -> str:
     return (
         '<section id="portada">'
         f'<p class="meta">TERMO · Monitor semanal de Treasuries · lectura '
-        f"{datos.fecha:%Y-%m-%d}</p>"
+        f"{datos.fecha:%Y-%m-%d} · snapshot {_e(_corto(datos.hoja['snapshot_hash']))}"
+        f" · código {_e(_corto(datos.hoja.get('code_commit', '')))}</p>"
         f"<h1>{_e(fase[:1].upper() + fase[1:])}</h1>"
         f'<p class="titular">{_e(titular.texto)}</p>{avisos}'
         f'<ul class="vinetas">{vinetas}</ul>'
@@ -339,7 +354,10 @@ def _validacion(datos: DatosReporte) -> str:
     )
     sombra = validacion["sombra"]
     faltan = int(sombra["proxima_evaluacion_semanas"])
-    proxima = "ya puede correrse" if faltan == 0 else f"en {faltan} semanas"
+    if faltan == 0:
+        proxima = "ya puede correrse"
+    else:
+        proxima = f"en {faltan} {'semana' if faltan == 1 else 'semanas'}"
     tarjetas = (
         ("Veredictos registrados", veredictos),
         ("Semanas de sombra", f"{int(sombra['semanas'])}"),
@@ -370,11 +388,15 @@ def _validacion(datos: DatosReporte) -> str:
 
 
 def _comentario(datos: DatosReporte) -> str:
+    """The analyst's '#' and '##' become h3 and h4: the page keeps one h1 and owns its h2."""
     if datos.comentario is None:
         return ""
+    cuerpo = md_to_html(datos.comentario)
+    for de, a in (("h2", "h4"), ("h1", "h3")):
+        cuerpo = cuerpo.replace(f"<{de}>", f"<{a}>").replace(f"</{de}>", f"</{a}>")
     return (
         '<section id="comentario"><p class="kicker">Comentario (no generado por TERMO)</p>'
-        f"<h2>Comentario del analista</h2>{md_to_html(datos.comentario)}</section>"
+        f"<h2>Comentario del analista</h2>{cuerpo}</section>"
     )
 
 
@@ -397,10 +419,9 @@ def render(datos: DatosReporte, generado: str) -> str:
         cuerpos.append(comentario)
         indice.append(("comentario", "Comentario"))
     nav = "".join(f'<a href="#{a}">{_e(t)}</a>' for a, t in indice)
-    huella = str(datos.hoja["snapshot_hash"])
     pie = (
-        f"<footer>Generado el {_e(generado)} · snapshot {_e(huella[:12])} · código "
-        f"{_e(str(datos.hoja.get('code_commit', ''))[:12])} · {_e(FUENTE)}</footer>"
+        f"<footer>Generado el {_e(generado)} · snapshot {_e(_corto(datos.hoja['snapshot_hash']))}"
+        f" · código {_e(_corto(datos.hoja.get('code_commit', '')))} · {_e(FUENTE)}</footer>"
     )
     return "\n".join(
         [

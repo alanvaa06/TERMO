@@ -12,12 +12,14 @@ import pytest
 from conftest import make_desc2_config
 from termo.operation.config import load_operation_config
 from termo.operation.sheet_es import FIDELITY_WARNING
+from termo.operation.visual import graficas as g
 from termo.operation.visual.calculos import Posicion
 from termo.operation.visual.datos import DatosReporte
 from termo.operation.visual.narrativa import titulares
 from termo.operation.visual.pagina import (
     ANCLAS,
     ARCHIVO,
+    SCRIPT_PAGINA,
     _num,
     _termometro,
     construir,
@@ -73,6 +75,41 @@ def test_the_cover_and_the_validation(datos: DatosReporte, page: str) -> None:
     assert "Nombres de fase elegidos tras el holdout; los valida solo la sombra." in page
     assert str(datos.hoja["snapshot_hash"])[:12] in page
     assert GENERADO in page
+    meta = re.search(r'<section id="portada"><p class="meta">([^<]*)</p>', page)
+    assert meta, "cover meta line"
+    assert f"lectura {datos.fecha:%Y-%m-%d}" in meta.group(1)
+    assert f"snapshot {str(datos.hoja['snapshot_hash'])[:12]}" in meta.group(1)
+    assert f"código {str(datos.hoja['code_commit'])[:12]}" in meta.group(1)
+
+
+def _proxima(datos: DatosReporte, semanas: int) -> str:
+    validacion = datos.lectura["validation"]
+    sombra = {**validacion["sombra"], "proxima_evaluacion_semanas": semanas}
+    lectura = {**datos.lectura, "validation": {**validacion, "sombra": sombra}}
+    return _seccion(render(replace(datos, hoja={**datos.hoja, "reading": lectura}), GENERADO),
+                    "validacion")
+
+
+def test_next_shadow_evaluation_is_pluralised(datos: DatosReporte) -> None:
+    assert ">en 1 semana<" in _proxima(datos, 1)
+    assert ">en 3 semanas<" in _proxima(datos, 3)
+    assert ">ya puede correrse<" in _proxima(datos, 0)
+
+
+def _con_variables(datos: DatosReporte, n: int) -> str:
+    variables = (datos.lectura["top_variables"] * 12)[:n]
+    lectura = {**datos.lectura, "top_variables": variables}
+    return render(replace(datos, hoja={**datos.hoja, "reading": lectura}), GENERADO)
+
+
+def test_the_variables_chart_title_counts_the_sheet_variables(
+    datos: DatosReporte, page: str
+) -> None:
+    assert len(datos.lectura["top_variables"]) == 5
+    assert "Las cinco variables de mayor contribución" in page
+    assert "Las tres variables de mayor contribución" in _con_variables(datos, 3)
+    assert "La variable de mayor contribución" in _con_variables(datos, 1)
+    assert "Las 12 variables de mayor contribución" in _con_variables(datos, 12)
 
 
 def test_text_is_escaped(datos: DatosReporte) -> None:
@@ -87,7 +124,15 @@ def test_the_analyst_comment_appears_only_when_written(datos: DatosReporte) -> N
     comentario = _seccion(page, "comentario")
     assert "<h2>Comentario del analista</h2>" in comentario
     assert "(no generado por TERMO)" in comentario
-    assert "<h2>Lectura</h2>" in page and "La curva &lt;sube&gt;." in page
+    assert "<h4>Lectura</h4>" in comentario and "La curva &lt;sube&gt;." in page
+
+
+def test_analyst_headings_never_compete_with_the_page_headings(datos: DatosReporte) -> None:
+    page = render(replace(datos, comentario="# Titulo\n\n## Sub\n\nTexto."), GENERADO)
+    comentario = _seccion(page, "comentario")
+    assert "<h3>Titulo</h3>" in comentario and "<h4>Sub</h4>" in comentario
+    assert page.count("<h1>") == 1  # only the cover's phase
+    assert comentario.count("<h2>") == 1  # only the section's own heading
 
 
 def test_unvalidated_drivers_carry_the_fidelity_warning(
@@ -131,6 +176,11 @@ def test_the_page_script_recolours_every_y_axis_and_follows_x(page: str) -> None
     assert "addListener" in page  # older Safari has no addEventListener on MediaQueryList
     assert "plotly_relayout" in page and "ajustar_y" in page
     assert "beforeprint" in page and "afterprint" in page and "Plotly.Plots.resize" in page
+
+
+def test_the_page_script_light_colours_are_the_figures_own() -> None:
+    assert f"'{g.TINTA}'" in SCRIPT_PAGINA and f"'{g.RETICULA}'" in SCRIPT_PAGINA
+    assert "__" not in SCRIPT_PAGINA  # every placeholder filled
 
 
 def test_print_uses_the_light_palette_without_buttons(page: str) -> None:

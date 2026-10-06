@@ -7,14 +7,15 @@ DatosReporte and calculos.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 from termo.operation.monthly import transitions
 from termo.operation.visual import calculos
 from termo.operation.visual.calculos import Cuadrante, Posicion
 from termo.operation.visual.datos import DatosReporte
-from termo.operation.visual.etiquetas import bloque_es
+from termo.operation.visual.etiquetas import PLAZOS, bloque_es
+from termo.validation.metrics import BP_PER_PERCENT
 
 CLAVES = (
     "portada",
@@ -28,8 +29,6 @@ CLAVES = (
     "transiciones",
     "macro",
 )
-PLAZOS = {"DGS1": "1A", "DGS2": "2A", "DGS3": "3A", "DGS5": "5A", "DGS7": "7A", "DGS10": "10A",
-          "DGS30": "30A"}
 NO_VALIDADO = (
     "Las explicaciones de esta semana no pasaron la validación de fidelidad del imitador"
 )
@@ -44,6 +43,11 @@ class Titular:
 
 def _capital(texto: str) -> str:
     return texto[:1].upper() + texto[1:]
+
+
+def _enumerar(partes: Sequence[str]) -> str:
+    """'a', 'a y b', 'a, b y c'."""
+    return partes[0] if len(partes) == 1 else ", ".join(partes[:-1]) + " y " + partes[-1]
 
 
 def _movimiento(pb: float) -> str:
@@ -96,13 +100,21 @@ def titular_firma(fase: str, plazo: str | None, valor_pb: float | None) -> str:
     )
 
 
-def titular_episodios(fase: str, cuadrante: Cuadrante | None, n: int, total: int) -> str:
-    """`total` counts the CLOSED episodes of the phase; the open one is not history yet."""
-    if total == 0 or cuadrante is None:
+def titular_episodios(
+    fase: str, cuadrantes: Sequence[Cuadrante], n: int, total: int
+) -> str:
+    """`total` counts the CLOSED episodes of the phase; the open one is not history yet.
+
+    `cuadrantes` are the most frequent quadrants, `n` episodes each: on a tie every one
+    is named with its own count, as in titular_transicion.
+    """
+    if total == 0 or not cuadrantes:
         return f"Es el primer episodio de {fase} en la historia"
     if total == 1:
-        return f"El único episodio de {fase} ya cerrado fue {cuadrante.value}"
-    return f"{n} de {total} episodios de {fase} ya cerrados fueron {cuadrante.value}"
+        return f"El único episodio de {fase} ya cerrado fue {cuadrantes[0].value}"
+    verbo = "fue" if n == 1 else "fueron"
+    partes = [f"{verbo} {cuadrantes[0].value}", *(f"{n} {c.value}" for c in cuadrantes[1:])]
+    return f"{n} de {total} episodios de {fase} ya cerrados {_enumerar(partes)}"
 
 
 def titular_transicion(fase: str, total: int, proporciones: Mapping[str, float | None]) -> str:
@@ -122,12 +134,13 @@ def titular_transicion(fase: str, total: int, proporciones: Mapping[str, float |
     cuenta = f"{k} ({maxima:.0%})"
     verbo = "dio" if k == 1 else "dieron"
     partes = [f"{cuenta} {verbo} paso a {destinos[0]}", *(f"{cuenta} a {d}" for d in destinos[1:])]
-    lista = partes[0] if len(partes) == 1 else ", ".join(partes[:-1]) + " y " + partes[-1]
-    return f"De {total} episodios de {fase} ya cerrados, {lista}"
+    return f"De {total} episodios de {fase} ya cerrados, {_enumerar(partes)}"
 
 
-def titular_macro(etiqueta: str, percentil: float) -> str:
-    return f"{_capital(etiqueta)} está en el percentil {percentil * 100:.0f} a 10 años"
+def titular_macro(etiqueta: str, percentil: float, fecha_dato: str | None = None) -> str:
+    """`fecha_dato` when the value predates the reading (the sheet's 'nota' says so)."""
+    texto = f"{_capital(etiqueta)} está en el percentil {percentil * 100:.0f} a 10 años"
+    return texto if fecha_dato is None else f"{texto} (dato del {fecha_dato})"
 
 
 def titulares(datos: DatosReporte) -> dict[str, Titular]:
@@ -151,7 +164,7 @@ def titulares(datos: DatosReporte) -> dict[str, Titular]:
 
     curvas = calculos.curvas_pasadas(datos.curva, datos.fecha)
     if "hace 3m" in curvas.index:
-        cambio = (curvas.loc["hoy"] - curvas.loc["hace 3m"]) * 100.0
+        cambio = (curvas.loc["hoy"] - curvas.loc["hace 3m"]) * BP_PER_PERCENT
         curva = titular_curva(float(cambio["DGS2"]), float(cambio["DGS10"]))
     else:
         curva = CURVA_CORTA
@@ -167,17 +180,19 @@ def titulares(datos: DatosReporte) -> dict[str, Titular]:
     cerrados = datos.episodios.iloc[:-1]  # the last episode is the current, still open
     suyos = cerrados[cerrados["fase"] == fase_n]
     if suyos.empty:
-        texto_episodios = titular_episodios(fase, None, 0, 0)
+        texto_episodios = titular_episodios(fase, (), 0, 0)
     else:
-        cuadrantes = calculos.cuadrantes(suyos)
-        moda = Cuadrante(cuadrantes.mode().iloc[0])
-        n_moda = int((cuadrantes == moda).sum())
-        texto_episodios = titular_episodios(fase, moda, n_moda, int(len(cuadrantes)))
+        conteo = calculos.cuadrantes(suyos).value_counts()
+        n_moda = int(conteo.max())
+        modas = [c for c in Cuadrante if int(conteo.get(c, 0)) == n_moda]  # enum order
+        texto_episodios = titular_episodios(fase, modas, n_moda, len(suyos))
 
     salida = transitions(datos.episodios, datos.nombres)[fase_n]
 
     macro = max(datos.hoja["macro"], key=lambda m: abs(float(m["percentil_10a"]) - 0.5))
-    texto_macro = titular_macro(str(macro["serie"]), float(macro["percentil_10a"]))
+    # the sheet's 'nota' is non-empty when the last value predates the reading date
+    fecha_dato = str(macro["fecha_valor"]) if macro["nota"] else None
+    texto_macro = titular_macro(str(macro["serie"]), float(macro["percentil_10a"]), fecha_dato)
     texto_acuerdo = titular_acuerdo(coincidencia)
 
     return {

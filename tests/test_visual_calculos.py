@@ -7,7 +7,9 @@ import pandas as pd
 import pytest
 
 from termo.operation.visual.calculos import (
+    MIN_EPISODIOS_BANDA,
     Cuadrante,
+    Posicion,
     acuerdo,
     banda_macro,
     bloque_dominante,
@@ -182,10 +184,17 @@ def test_duration_position_uses_finished_episodes_only() -> None:
     assert posicion_duracion(episodios, fase=2, dias=200).relativa == "por encima"
     assert posicion_duracion(episodios, fase=2, dias=20).relativa == "por debajo"
     vacia = posicion_duracion(episodios, fase=1, dias=5)
-    assert vacia.episodios == 1 and vacia.relativa == "por debajo"
+    assert vacia.episodios == 1 and vacia.mediana == 30.0
+    assert vacia.relativa is None  # one episode has no quartile range to stand against
     sin_historia = posicion_duracion(episodios.iloc[:2], fase=0, dias=5)
     assert sin_historia.episodios == 0 and sin_historia.mediana is None
     assert sin_historia.relativa is None
+
+
+def test_no_relative_position_below_the_minimum_of_finished_episodes() -> None:
+    assert MIN_EPISODIOS_BANDA == 4
+    assert Posicion(200, 3, 30.0, 50.0, 70.0).relativa is None
+    assert Posicion(200, 4, 30.0, 50.0, 70.0).relativa == "por encima"
 
 
 def test_dominant_block_is_the_largest_absolute_mean_since_a_date() -> None:

@@ -6,16 +6,16 @@ import dataclasses
 import re
 from collections import Counter
 
+import pandas as pd
 import pytest
 
 from termo.operation.visual.calculos import Cuadrante, Posicion
 from termo.operation.visual.datos import DatosReporte
-from termo.operation.visual.etiquetas import bloque_es
+from termo.operation.visual.etiquetas import PLAZOS, bloque_es
 from termo.operation.visual.narrativa import (
     CLAVES,
     CURVA_CORTA,
     NO_VALIDADO,
-    PLAZOS,
     Titular,
     titular_10a,
     titular_acuerdo,
@@ -66,6 +66,9 @@ def test_cover_headline_places_the_episode_against_the_quartiles() -> None:
     )
     sin_pasado = Posicion(dias=12, episodios=0, p25=None, mediana=None, p75=None)
     assert titular_portada("rally fuerte", sin_pasado) == "La curva está en rally fuerte: 12 días"
+    # under 4 finished episodes the thermometer shows no quartile band: no quartile clause
+    pocos = Posicion(dias=199, episodios=3, p25=41.0, mediana=85.0, p75=114.0)
+    assert titular_portada("venta", pocos) == "La curva está en venta: 199 días"
 
 
 def test_ten_year_headline() -> None:
@@ -119,17 +122,36 @@ def test_signature_and_macro() -> None:
     assert titular_macro("prima por plazo 10 anos (Kim-Wright)", 0.9996) == (
         "Prima por plazo 10 anos (Kim-Wright) está en el percentil 100 a 10 años"
     )
+    assert titular_macro("prima por plazo 10 anos (Kim-Wright)", 0.9996, "2026-09-25") == (
+        "Prima por plazo 10 anos (Kim-Wright) está en el percentil 100 a 10 años "
+        "(dato del 2026-09-25)"
+    )
 
 
 def test_episodes_headline_counts_closed_episodes() -> None:
-    assert titular_episodios("venta", Cuadrante.BEAR_FLATTENER, 31, 55) == (
+    assert titular_episodios("venta", (Cuadrante.BEAR_FLATTENER,), 31, 55) == (
         "31 de 55 episodios de venta ya cerrados fueron bear flattener"
     )
-    assert titular_episodios("venta", Cuadrante.MIXTO, 1, 1) == (
+    assert titular_episodios("venta", (Cuadrante.PARALELO,), 1, 3) == (
+        "1 de 3 episodios de venta ya cerrados fue paralelo"
+    )
+    assert titular_episodios("venta", (Cuadrante.MIXTO,), 1, 1) == (
         "El único episodio de venta ya cerrado fue mixto"
     )
-    assert titular_episodios("rally fuerte", None, 0, 0) == (
+    assert titular_episodios("rally fuerte", (), 0, 0) == (
         "Es el primer episodio de rally fuerte en la historia"
+    )
+
+
+def test_a_tie_in_episodes_names_every_tied_quadrant() -> None:
+    empate = (Cuadrante.BEAR_FLATTENER, Cuadrante.BULL_FLATTENER)
+    assert titular_episodios("venta", empate, 1, 2) == (
+        "1 de 2 episodios de venta ya cerrados fue bear flattener y 1 bull flattener"
+    )
+    tres = (Cuadrante.BEAR_STEEPENER, Cuadrante.BULL_STEEPENER, Cuadrante.MIXTO)
+    assert titular_episodios("venta", tres, 2, 6) == (
+        "2 de 6 episodios de venta ya cerrados fueron bear steepener, 2 bull steepener "
+        "y 2 mixto"
     )
 
 
@@ -164,9 +186,7 @@ def test_every_block_gets_a_headline_and_the_cover_three_bullets() -> None:
     assert set(textos) == set(CLAVES)
     assert len(textos["portada"].vinetas) == 3
     assert textos["portada"].texto.startswith("La curva está en venta: ")
-    assert textos["episodios"].texto.endswith(
-        tuple(f"ya cerrados fueron {c.value}" for c in Cuadrante)
-    )
+    assert " episodios de venta ya cerrados " in textos["episodios"].texto
 
 
 # --- integration: every pick recomputed independently on the synthetic week ---
@@ -197,10 +217,41 @@ def test_signature_tenor_is_the_largest_absolute_median_of_the_phase() -> None:
 def test_macro_bullet_is_the_series_farthest_from_the_median() -> None:
     datos = make_datos()
     lejana = sorted(datos.hoja["macro"], key=lambda m: -abs(m["percentil_10a"] - 0.5))[0]
+    assert lejana["nota"] == ""  # current on the reading date: no date in the headline
     esperado = titular_macro(str(lejana["serie"]), float(lejana["percentil_10a"]))
     textos = titulares(datos)
     assert textos["macro"].texto == esperado
     assert textos["portada"].vinetas[2] == esperado
+    assert "(dato del" not in esperado
+
+
+def _macro_unica(datos: DatosReporte, fecha_valor: str, nota: str) -> DatosReporte:
+    fila = {
+        "serie": "prima por plazo 10 anos (Kim-Wright)",
+        "valor": 1.02,
+        "fecha_valor": fecha_valor,
+        "percentil_10a": 0.9996,
+        "cambio_21d": 0.18,
+        "dias_de_ventana": 2520,
+        "nota": nota,
+    }
+    return dataclasses.replace(datos, hoja={**datos.hoja, "macro": [fila]})
+
+
+def test_a_stale_macro_value_carries_its_date() -> None:
+    datos = make_datos()
+    lectura = f"{datos.fecha:%Y-%m-%d}"
+    previo = f"{datos.fecha - pd.Timedelta(days=7):%Y-%m-%d}"
+    viejo = titulares(_macro_unica(datos, previo, f"último dato disponible: {previo}"))
+    esperado = (
+        "Prima por plazo 10 anos (Kim-Wright) está en el percentil 100 a 10 años "
+        f"(dato del {previo})"
+    )
+    assert viejo["macro"].texto == esperado and viejo["portada"].vinetas[2] == esperado
+    actual = titulares(_macro_unica(datos, lectura, ""))
+    assert actual["macro"].texto == (
+        "Prima por plazo 10 anos (Kim-Wright) está en el percentil 100 a 10 años"
+    )
 
 
 def test_transition_targets_are_the_largest_share_of_closed_venta_episodes() -> None:
@@ -226,9 +277,9 @@ def test_episodes_headline_ignores_the_open_episode() -> None:
     cerrados = datos.episodios.iloc[:-1]
     assert int((cerrados["fase"] == 2).sum()) == 2
     # closed venta episodes: 2Y +90.54/10Y +82.83 (bear flattener) and 2Y -183.96/10Y
-    # -185.33 (bull flattener); the open one does not count
+    # -185.33 (bull flattener), a tie; the open one does not count
     assert titulares(datos)["episodios"].texto == (
-        "1 de 2 episodios de venta ya cerrados fueron bear flattener"
+        "1 de 2 episodios de venta ya cerrados fue bear flattener y 1 bull flattener"
     )
     solo_actual = dataclasses.replace(datos, episodios=datos.episodios.iloc[-1:])
     textos = titulares(solo_actual)
@@ -268,11 +319,16 @@ def _todas_las_frases() -> list[str]:
     frases += [
         titular_transicion("venta", 2, _a(0.5, 0.5, 0.0)),
         titular_transicion("venta", 0, _a(None, None, None)),
-        titular_episodios("venta", None, 0, 0),
-        titular_episodios("venta", Cuadrante.MIXTO, 1, 1),
+        titular_episodios("venta", (), 0, 0),
+        titular_episodios("venta", (Cuadrante.MIXTO,), 1, 1),
+        titular_episodios("venta", (Cuadrante.PARALELO,), 1, 3),
+        titular_episodios("venta", (Cuadrante.BEAR_FLATTENER, Cuadrante.MIXTO), 2, 4),
+        titular_macro("prima por plazo", 0.5, "2026-09-25"),
         titular_transicion("venta", 1, _a(0.0, 1.0, 0.0)),
         titular_firma("venta", None, None),
         titular_portada("venta", Posicion(5, 0, None, None, None)),
+        titular_portada("venta", Posicion(5, 3, 2.0, 4.0, 6.0)),
+        titular_portada("venta", Posicion(5, 6, 2.0, 4.0, 6.0)),
         titular_curva(5.0, 5.4),
         titular_10a("venta", "2025-12-18", 0.0),
     ]

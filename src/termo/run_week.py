@@ -4,14 +4,16 @@ Everything the operation produces stays where `termo.op_cli` puts it (the shadow
 sheet, the CSV, the ficha); this module runs those stages, copies their files under
 `output/<reading date>/` and builds `reporte.html` from those copies and the snapshot.
 `--solo-reporte` rebuilds only the report, without running the model. A week run again
-overwrites that directory; the shadow log keeps both runs, as always. Console output is
-ASCII only.
+overwrites that directory; the shadow log keeps both runs, as always. If the report fails
+after the model ran, the reading stays logged and the run exits 1 with the command that
+rebuilds it. Console output is ASCII only.
 """
 
 from __future__ import annotations
 
 import argparse
 import shutil
+import sys
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
@@ -71,25 +73,20 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--output",
         type=Path,
-        default=OUTPUT_DIR,
+        default=None,  # None, not OUTPUT_DIR: so --solo-reporte can reject an explicit one
         help=f"where <reading date>/ is created (default: {OUTPUT_DIR.as_posix()})",
     )
     return parser
 
 
-def _report(
-    parser: argparse.ArgumentParser, ctx: Operation, out_dir: Path, snapshot_dir: Path
-) -> Path:
-    try:
-        return construir(
-            out_dir,
-            snapshot_dir,
-            ctx.config,
-            ctx.op,
-            datetime.now(UTC).isoformat(timespec="seconds"),
-        )
-    except (ValueError, FileNotFoundError) as error:
-        parser.error(str(error))
+def _report(ctx: Operation, out_dir: Path, snapshot_dir: Path) -> Path:
+    return construir(
+        out_dir,
+        snapshot_dir,
+        ctx.config,
+        ctx.op,
+        datetime.now(UTC).isoformat(timespec="seconds"),
+    )
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -97,13 +94,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.solo_reporte is not None and (args.download or args.mes is not None):
         parser.error("--solo-reporte takes --snapshot only: no --download, no --mes")
+    if args.solo_reporte is not None and args.output is not None:
+        parser.error("--solo-reporte writes into its own DIR: --output does not apply")
     try:
         ctx = open_operation(args.operacion)
     except ValueError as error:
         parser.error(str(error))
 
     if args.solo_reporte is not None:
-        report = _report(parser, ctx, args.solo_reporte, args.snapshot)
+        try:
+            report = _report(ctx, args.solo_reporte, args.snapshot)
+        except (ValueError, FileNotFoundError) as error:
+            parser.error(str(error))
         print(f"[ok] reporte -> {report.as_posix()}")
         return 0
 
@@ -130,11 +132,21 @@ def main(argv: Sequence[str] | None = None) -> int:
             (ficha_path.with_suffix(".json"), f"{FICHA_PREFIX}{args.mes}.json"),
         ]
 
-    out_dir: Path = args.output / stamp
+    out_dir: Path = (args.output or OUTPUT_DIR) / stamp
     out_dir.mkdir(parents=True, exist_ok=True)
     for source_path, name in copies:
         shutil.copyfile(source_path, out_dir / name)
-    report = _report(parser, ctx, out_dir, snapshot_dir)
+    try:
+        report = _report(ctx, out_dir, snapshot_dir)
+    except (ValueError, FileNotFoundError) as error:
+        # the reading is already logged: no usage error, say how to rebuild the report alone
+        message = str(error).encode("ascii", "replace").decode("ascii")
+        print(
+            f"[x] reporte: {message}; rebuild with --solo-reporte {out_dir.as_posix()} "
+            f"--snapshot {snapshot_dir.as_posix()}",
+            file=sys.stderr,
+        )
+        return 1
     print(f"[ok] reporte -> {report.as_posix()}")
     return 0
 
