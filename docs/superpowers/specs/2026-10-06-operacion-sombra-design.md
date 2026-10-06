@@ -122,7 +122,7 @@ No incluye "movimiento típico en esta fase" ni ninguna cifra condicionada a lo 
 | Prima por plazo 10 años (Kim–Wright) | FRED `THREEFYTP10`, diaria desde 1990 | contexto |
 | Fed funds efectiva | FRED `DFF` | proxy de expectativa: `DGS2 − DFF` |
 
-- Sustituye al ACM del diseño (NY Fed lo publica en Excel fuera de FRED; mismo concepto, otra estimación). **Supuesto a verificar en la primera tarea del plan:** que ambas series existen en FRED con ese identificador y cobertura diaria.
+- Sustituye al ACM del diseño (NY Fed lo publica en Excel fuera de FRED; mismo concepto, otra estimación). **Verificado en FRED el 2026-10-06:** `THREEFYTP10` diaria desde 1990-01-02, publicada con ~1 semana de retraso (último dato 2026-09-25); `DFF` diaria desde 1954 incluyendo fines de semana (se toma el valor del día hábil).
 - Por serie: valor en la fecha de lectura, percentil dentro de los últimos 10 años (2,520 días), cambio en 21 días hábiles. Sin umbrales ni semáforos.
 - Huecos: si una serie macro no tiene dato en la fecha, se usa el último disponible y se anota.
 
