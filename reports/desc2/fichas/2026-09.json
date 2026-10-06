@@ -1,0 +1,144 @@
+{
+  "alertas": [],
+  "bloques_promedio": {},
+  "descargo": "TERMO describe la fase actual de la curva. No anticipa la tasa a 10 años: en 62 pruebas registradas las fases no superaron a la inercia.",
+  "desde": "2025-12-18",
+  "dias_en_fase": 197,
+  "duraciones": [
+    {
+      "episodios": 21,
+      "fase": 0,
+      "mediana_dias": 74.0,
+      "nombre": "rally fuerte",
+      "p25_dias": 30.0,
+      "p75_dias": 125.0
+    },
+    {
+      "episodios": 49,
+      "fase": 1,
+      "mediana_dias": 55.0,
+      "nombre": "rally moderado",
+      "p25_dias": 23.0,
+      "p75_dias": 98.0
+    },
+    {
+      "episodios": 55,
+      "fase": 2,
+      "mediana_dias": 85.0,
+      "nombre": "venta",
+      "p25_dias": 41.0,
+      "p75_dias": 114.0
+    }
+  ],
+  "fase_cierre": 2,
+  "generado_con": {
+    "code_commit": "abf07acef463126f3963067f549524baf1f051c9.6a5c57e0ac867a298aebe67f11d48e96347936aa.0bc700641939a01b2d9632b6a65563ca6117cdbc"
+  },
+  "lecturas": [],
+  "macro": [
+    {
+      "cambio_21d": 0.18089999999999995,
+      "dias_de_ventana": 2520,
+      "fecha_valor": "2026-09-25",
+      "nota": "último dato disponible: 2026-09-25",
+      "percentil_10a": 0.9996031746031746,
+      "serie": "prima por plazo 10 anos (Kim-Wright)",
+      "valor": 1.0203
+    },
+    {
+      "cambio_21d": 0.29000000000000004,
+      "dias_de_ventana": 2520,
+      "fecha_valor": "2026-09-30",
+      "nota": "",
+      "percentil_10a": 0.928968253968254,
+      "serie": "DGS2 - fed funds efectiva",
+      "valor": 1.0
+    }
+  ],
+  "mes": "2026-09",
+  "no_dice": "Lo que el modelo NO dice: hacia dónde irá la tasa ni qué posición tomar.",
+  "nombre_cierre": "venta",
+  "rotulo": "Frecuencias del pasado, no pronóstico; no probadas en holdout.",
+  "transiciones": [
+    {
+      "a": {
+        "rally fuerte": 0.0,
+        "rally moderado": 0.047619047619047616,
+        "venta": 0.9523809523809523
+      },
+      "fase": 0,
+      "nombre": "rally fuerte",
+      "total": 21
+    },
+    {
+      "a": {
+        "rally fuerte": 0.2857142857142857,
+        "rally moderado": 0.0,
+        "venta": 0.7142857142857143
+      },
+      "fase": 1,
+      "nombre": "rally moderado",
+      "total": 49
+    },
+    {
+      "a": {
+        "rally fuerte": 0.12962962962962962,
+        "rally moderado": 0.8703703703703703,
+        "venta": 0.0
+      },
+      "fase": 2,
+      "nombre": "venta",
+      "total": 54
+    }
+  ],
+  "ultimo_dia": "2026-09-30",
+  "validacion": {
+    "by_phase": [
+      {
+        "days": 19,
+        "direction_share": 0.8947368421052632,
+        "episodes": 1,
+        "evaluable": false,
+        "median_duration_days": 19.0,
+        "name": "rally fuerte",
+        "phase": 0,
+        "recall": 0.5789473684210527
+      },
+      {
+        "days": 198,
+        "direction_share": 0.7070707070707071,
+        "episodes": 1,
+        "evaluable": true,
+        "median_duration_days": 198.0,
+        "name": "rally moderado",
+        "phase": 1,
+        "recall": 0.7222222222222222
+      },
+      {
+        "days": 282,
+        "direction_share": 0.9148936170212766,
+        "episodes": 2,
+        "evaluable": true,
+        "median_duration_days": 141.0,
+        "name": "venta",
+        "phase": 2,
+        "recall": 0.9645390070921985
+      }
+    ],
+    "diagnostic": "apto",
+    "failed_checks": [],
+    "fidelity_failed": false,
+    "holdout": "apto",
+    "holdout_seen_by": "desc_k3 (trials/desc), opened 2026-10-05, verdict no-apto by D4 only",
+    "registered_verdicts": [
+      {
+        "stage": "diagnostic",
+        "verdict": "apto"
+      },
+      {
+        "stage": "holdout",
+        "verdict": "apto"
+      }
+    ]
+  }
+}
