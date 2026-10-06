@@ -163,9 +163,12 @@ def posicion_duracion(episodios: pd.DataFrame, fase: int, dias: int) -> Posicion
 def bloque_dominante(
     historia: pd.DataFrame, bloques: Sequence[str], desde: pd.Timestamp
 ) -> tuple[str, float]:
-    """The block with the largest mean contribution from `desde` to the end of `historia`."""
+    """The block with the largest ABSOLUTE mean contribution from `desde` on, signed mean.
+
+    Ranked by absolute value, as the sheet ranks its drivers.
+    """
     medias = historia.loc[desde:, list(bloques)].mean()
-    nombre = str(medias.idxmax())
+    nombre = str(medias.abs().idxmax())
     return nombre, float(medias[nombre])
 
 

@@ -188,14 +188,15 @@ def test_duration_position_uses_finished_episodes_only() -> None:
     assert sin_historia.relativa is None
 
 
-def test_dominant_block_is_the_largest_mean_since_a_date() -> None:
+def test_dominant_block_is_the_largest_absolute_mean_since_a_date() -> None:
+    # ranked by absolute contribution, as the sheet ranks its drivers; the mean keeps its sign
     historia = pd.DataFrame(
-        {"nivel medio": [5.0, 0.0, 0.1, 0.1], "pendientes": [0.0, 1.0, 0.5, 0.5]},
+        {"nivel medio": [-5.0, 0.0, 0.1, 0.1], "pendientes": [0.0, 1.0, 0.5, 0.5]},
         index=DIAS[:4],
     )
     assert bloque_dominante(historia, ("nivel medio", "pendientes"), DIAS[0]) == (
         "nivel medio",
-        pytest.approx(1.3),
+        pytest.approx(-1.2),
     )
     nombre, media = bloque_dominante(historia, ("nivel medio", "pendientes"), DIAS[1])
     assert nombre == "pendientes" and media == pytest.approx(2.0 / 3.0)

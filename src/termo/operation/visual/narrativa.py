@@ -73,7 +73,7 @@ def titular_motor(bloque: str, aporte: float) -> str:
 
 
 def titular_motores_tiempo(bloque: str, inicio: str) -> str:
-    return f"Desde {inicio}, el bloque de mayor aporte medio es {bloque_es(bloque)}"
+    return f"Desde {inicio}, el bloque que más pesa en promedio es {bloque_es(bloque)}"
 
 
 def titular_curva(cambio_2y: float, cambio_10y: float) -> str:

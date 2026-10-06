@@ -20,13 +20,19 @@ from termo.operation.visual.etiquetas import bloque_es, variable_es
 
 COLORES_FASE = ("#2a78d6", "#1baf7a", "#e34948")
 COLORES_BLOQUE = ("#6250d6", "#eb6834", "#eda100", "#e87ba4", "#008300", "#888780")
-GRIS = "#888780"
-TINTA = "#4a4843"
+# Marks and reference lines keep a fixed colour in both modes, so they are mid-tones that
+# clear WCAG 3:1 on the light (#fbfaf7) and the dark (#161615) page alike.
+GRIS = "#888780"  # 3.45 on light, 5.02 on dark
+MARCA = "#77756f"  # 4.41 on light, 3.93 on dark: totals and the current episode
+TINTA = "#4a4843"  # the light-mode font only: the page script recolours it in dark mode
 EJE = "#c3c2b7"
 RETICULA = "rgba(137,135,129,0.18)"
 COLOR_MACRO = "#6250d6"
-GRISES_CURVA = (("hace 1m", "#888780", "dot"), ("hace 3m", "#b4b2a9", "dash"),
-                ("hace 1a", "#d3d1c7", "longdash"))
+GRISES_CURVA = (("hace 1m", "dot", 2.4), ("hace 3m", "dash", 1.6),
+                ("hace 1a", "longdash", 1.0))  # one grey, told apart by dash and width
+# Neutral (blue is 'rally fuerte'). Capped at 0.6 so the cell text, in the page's font
+# colour, keeps >= 3.8:1 on the darkest cell in both modes (0.85 drops to 2.5 in dark).
+RAMPA_TRANSICION = [[0.0, "rgba(137,135,129,0.08)"], [1.0, "rgba(137,135,129,0.6)"]]
 PLAZOS = {"DGS1": "1A", "DGS2": "2A", "DGS3": "3A", "DGS5": "5A", "DGS7": "7A",
           "DGS10": "10A", "DGS30": "30A"}
 ALTO = 380
@@ -70,6 +76,12 @@ def _valores(serie: pd.Series, decimales: int = 3) -> list[float]:
 
 def _historia(datos: DatosReporte) -> pd.DataFrame:
     return datos.historia.loc[: datos.fecha]
+
+
+def _semanal(historia: pd.DataFrame) -> pd.DataFrame:
+    """The last labelled day of each W-FRI week: past days dropped, the reading day kept."""
+    ultimo = ~historia.index.to_period("W-FRI").duplicated(keep="last")
+    return historia[ultimo]
 
 
 def _selector_rango(fig: go.Figure, fecha: pd.Timestamp, anios: int = 3) -> None:
@@ -128,14 +140,17 @@ def _sombrear_fases(fig: go.Figure, episodios: pd.DataFrame) -> None:
 
 
 def fig_10a(datos: DatosReporte) -> go.Figure:
-    """The 10Y coloured by the jump model's phase; a run reaches into the next day."""
+    """The 10Y coloured by the jump model's phase; a segment takes the colour of its end day.
+
+    So the reading day is always drawn in its own phase, even on the day a phase starts.
+    """
     historia = _historia(datos)
     fases = historia["fase"]
     tasa = datos.curva["DGS10"].reindex(historia.index)
     dias = _dias(historia.index)
     fig = go.Figure()
     for fase, nombre in enumerate(datos.nombres):
-        dentro = (fases == fase) | (fases.shift(1) == fase)
+        dentro = (fases == fase) | (fases.shift(-1) == fase)
         fig.add_trace(
             go.Scatter(
                 x=dias, y=_valores(tasa.where(dentro)), name=nombre, mode="lines",
@@ -150,8 +165,11 @@ def fig_10a(datos: DatosReporte) -> go.Figure:
 
 
 def fig_imitador(datos: DatosReporte) -> go.Figure:
-    """Jump-model phase and surrogate phase as strips, the surrogate's probabilities below."""
-    historia = _historia(datos)
+    """Jump-model phase and surrogate phase as strips, the surrogate's probabilities below.
+
+    Sampled weekly (the last labelled day of each week) to keep the page light.
+    """
+    historia = _semanal(_historia(datos))
     fig = make_subplots(rows=3, cols=1, shared_xaxes=True, row_heights=[0.08, 0.08, 0.84],
                         vertical_spacing=0.02)
     fig.add_trace(_franja(historia["fase"], datos.nombres, "fase"), row=1, col=1)
@@ -176,7 +194,7 @@ def fig_imitador(datos: DatosReporte) -> go.Figure:
 def fig_motores_hoy(datos: DatosReporte) -> go.Figure:
     """Base value, then each block's SHAP contribution, then the reading (log-odds)."""
     fila = datos.historia.loc[datos.fecha]
-    fase = int(datos.lectura["phase"])
+    fase = int(fila["fase"])  # the phase of the row the bars come from
     valores = [float(fila[b]) for b in datos.bloques]
     base = float(fila["base"])
     total = base + sum(valores)
@@ -189,8 +207,10 @@ def fig_motores_hoy(datos: DatosReporte) -> go.Figure:
             text=[f"{base:+.2f}", *(f"{v:+.2f}" for v in valores), f"{total:+.2f}"],
             textposition="outside",
             increasing={"marker": {"color": color_fase(fase)}},
-            decreasing={"marker": {"color": GRIS}},
-            totals={"marker": {"color": TINTA}},
+            # negatives hollow-ish (light fill, grey outline), the reading solid MARCA
+            decreasing={"marker": {"color": _rgba(GRIS, 0.3),
+                                   "line": {"color": GRIS, "width": 1.5}}},
+            totals={"marker": {"color": MARCA}},
             connector={"line": {"color": EJE}},
         )
     )
@@ -221,25 +241,33 @@ def fig_variables_hoy(datos: DatosReporte) -> go.Figure:
 
 
 def fig_motores_tiempo(datos: DatosReporte) -> go.Figure:
-    """Each block's contribution to the day's own phase, stacked by sign."""
-    historia = _historia(datos)
+    """Each block's contribution to the day's own phase, stacked by sign; sampled weekly.
+
+    A missing contribution stacks as 0 but shows as missing in the hover.
+    """
+    historia = _semanal(_historia(datos))
     dias = _dias(historia.index)
     fig = go.Figure()
     for posicion, bloque in enumerate(datos.bloques):
-        valor = historia[bloque].fillna(0.0)
+        valor = historia[bloque]
+        apilado = valor.fillna(0.0)
         nombre = bloque_es(bloque)
-        for grupo, parte in (("pos", valor.clip(lower=0.0)), ("neg", valor.clip(upper=0.0))):
-            fig.add_trace(
-                go.Scatter(
-                    x=dias, y=_valores(parte), customdata=_valores(valor), name=nombre,
-                    legendgroup=bloque, showlegend=grupo == "pos", stackgroup=grupo,
-                    mode="lines", line={"width": 0},
-                    fillcolor=_rgba(_color_bloque(posicion), 0.75),
-                    hovertemplate="%{customdata:+.2f}<extra>" + nombre + "</extra>"
-                    if grupo == "pos" else None,
-                    hoverinfo=None if grupo == "pos" else "skip",
-                )
+        relleno = _rgba(_color_bloque(posicion), 0.75)
+        fig.add_trace(
+            go.Scatter(
+                x=dias, y=_valores(apilado.clip(lower=0.0)), customdata=_valores(valor),
+                name=nombre, legendgroup=bloque, showlegend=True, stackgroup="pos", mode="lines",
+                line={"width": 0}, fillcolor=relleno,
+                hovertemplate="%{customdata:+.2f}<extra>" + nombre + "</extra>",
             )
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=dias, y=_valores(apilado.clip(upper=0.0)), name=nombre, legendgroup=bloque,
+                showlegend=False, stackgroup="neg", mode="lines", line={"width": 0},
+                fillcolor=relleno, hoverinfo="skip",
+            )
+        )
     _sombrear_fases(fig, datos.episodios)
     fig.update_layout(template=TEMA, height=420, yaxis_title="log-odds de la fase del día")
     _selector_rango(fig, datos.fecha)
@@ -251,7 +279,7 @@ def fig_curva(datos: DatosReporte) -> go.Figure:
     plazos = [PLAZOS.get(c, c) for c in curvas.columns]
     fase = int(datos.lectura["phase"])
     estilos = {"hoy": (color_fase(fase), "solid", 3.0)}
-    estilos.update({nombre: (color, guion, 1.8) for nombre, color, guion in GRISES_CURVA})
+    estilos.update({nombre: (GRIS, guion, ancho) for nombre, guion, ancho in GRISES_CURVA})
     fig = go.Figure()
     for etiqueta, fila in curvas.iterrows():
         color, guion, ancho = estilos[str(etiqueta)]
@@ -274,7 +302,7 @@ def fig_firma(datos: DatosReporte) -> go.Figure:
                        line={"color": color_fase(fase), "width": 2},
                        hovertemplate="%{y:+.1f} pb<extra>" + str(nombre) + "</extra>")
         )
-    fig.add_hline(y=0, line_color=EJE, line_width=1)
+    fig.add_hline(y=0, line_color=GRIS, line_width=1)
     fig.update_layout(template=TEMA, xaxis_type="category",
                       yaxis_title="cambio mediano a 1 mes (pb)")
     return fig
@@ -314,7 +342,7 @@ def fig_dispersion(datos: DatosReporte) -> go.Figure:
         go.Scatter(
             x=[float(actual["cambio_2y_pb"])], y=[float(actual["cambio_10y_pb"])],
             name="episodio actual", mode="markers",
-            marker={"symbol": "circle-open", "size": 22, "line": {"width": 3}, "color": TINTA},
+            marker={"symbol": "circle-open", "size": 22, "line": {"width": 3}, "color": MARCA},
             hovertemplate="episodio actual<extra></extra>",
         )
     )
@@ -323,9 +351,9 @@ def fig_dispersion(datos: DatosReporte) -> go.Figure:
         float(episodios["cambio_10y_pb"].abs().max()),
     )
     fig.add_shape(type="line", x0=-tope, y0=-tope, x1=tope, y1=tope,
-                  line={"color": EJE, "dash": "dot", "width": 1})
-    fig.add_hline(y=0, line_color=EJE, line_width=1)
-    fig.add_vline(x=0, line_color=EJE, line_width=1)
+                  line={"color": GRIS, "dash": "dot", "width": 1})
+    fig.add_hline(y=0, line_color=GRIS, line_width=1)
+    fig.add_vline(x=0, line_color=GRIS, line_width=1)
     for texto, x, y in (("bear steepener", 0.3, 0.9), ("bear flattener", 0.9, 0.3),
                         ("bull steepener", -0.9, -0.3), ("bull flattener", -0.3, -0.9)):
         fig.add_annotation(x=x * tope, y=y * tope, text=texto, showarrow=False,
@@ -339,6 +367,11 @@ def fig_dispersion(datos: DatosReporte) -> go.Figure:
 
 
 def fig_transiciones(datos: DatosReporte) -> go.Figure:
+    """Share of episodes of each phase followed by each phase.
+
+    The cell text is drawn as annotations: they take the layout font colour, which the
+    page script recolours in dark mode (a heatmap's own text would not follow it).
+    """
     filas = transitions(datos.episodios, datos.nombres)
     z: list[list[float | None]] = []
     texto: list[list[str]] = []
@@ -350,11 +383,13 @@ def fig_transiciones(datos: DatosReporte) -> go.Figure:
     fig = go.Figure(
         go.Heatmap(
             z=z, x=list(datos.nombres), y=list(datos.nombres), text=texto,
-            texttemplate="%{text}", colorscale=[[0.0, "#f0efec"], [1.0, "#2a78d6"]],
-            zmin=0, zmax=100, showscale=False,
+            colorscale=RAMPA_TRANSICION, zmin=0, zmax=100, showscale=False,
             hovertemplate="de %{y} a %{x}: %{text}<extra></extra>",
         )
     )
+    for desde, fila_texto in zip(datos.nombres, texto, strict=True):
+        for hacia, celda in zip(datos.nombres, fila_texto, strict=True):
+            fig.add_annotation(x=hacia, y=desde, text=celda, showarrow=False)
     fig.update_layout(template=TEMA, height=340, hovermode="closest",
                       xaxis={"title": "fase siguiente", "side": "top"},
                       yaxis={"title": "desde", "autorange": "reversed"})
@@ -373,7 +408,7 @@ def fig_duraciones(datos: DatosReporte) -> go.Figure:
     fig.add_trace(
         go.Scatter(x=[datos.nombres[int(actual["fase"])]], y=[int(actual["dias"])],
                    name="episodio actual", mode="markers",
-                   marker={"symbol": "diamond", "size": 14, "color": TINTA},
+                   marker={"symbol": "diamond", "size": 14, "color": MARCA},
                    hovertemplate="episodio actual: %{y} días<extra></extra>")
     )
     fig.update_layout(template=TEMA, hovermode="closest", yaxis_title="días hábiles")
@@ -386,12 +421,13 @@ def fig_macro(datos: DatosReporte, serie: SerieMacro) -> go.Figure:
     conocida = valores.dropna()
     banda = calculos.banda_macro(valores, datos.ventana_percentil)
     dias = _dias(conocida.index)
+    anios = round(datos.ventana_percentil / calculos.DIAS_ANIO)
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=dias, y=_valores(banda["p90"]), mode="lines",
                              line={"width": 0}, showlegend=False, hoverinfo="skip"))
     fig.add_trace(go.Scatter(x=dias, y=_valores(banda["p10"]), mode="lines", line={"width": 0},
                              fill="tonexty", fillcolor=_rgba(GRIS, 0.18),
-                             name="P10-P90 a 10 años", hoverinfo="skip"))
+                             name=f"P10-P90 a {anios} años", hoverinfo="skip"))
     fig.add_trace(go.Scatter(x=dias, y=_valores(conocida), mode="lines", name=serie.etiqueta,
                              line={"color": COLOR_MACRO, "width": 1.6},
                              hovertemplate="%{y:.2f}<extra></extra>"))
