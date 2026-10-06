@@ -11,8 +11,10 @@ from __future__ import annotations
 import argparse
 import re
 from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 
@@ -30,6 +32,7 @@ from termo.operation.shadow import (
     SHADOW_DIR,
     SHADOW_LOG_FILE,
     ShadowLog,
+    ShadowRun,
     latest_analysis,
     run_shadow,
 )
@@ -60,30 +63,78 @@ def _utc_now() -> datetime:
     return datetime.now(UTC)
 
 
-def _export(
-    op: OperationConfig,
-    config: CoreConfig,
-    model_log: TrialLog,
-    shadow_log: ShadowLog,
-    curve: pd.DataFrame,
-    analysis: Analysis,
-    snapshot_dir: Path,
-    reports: Path,
-) -> Path:
-    out = reports / CSV_DIR
-    export_all(
-        shadow_log.records(),
-        model_log,
+@dataclass(frozen=True)
+class Operation:
+    """What every stage works with: the registry's configurations, logs and directories."""
+
+    op: OperationConfig
+    config: CoreConfig
+    model_log: TrialLog
+    shadow_log: ShadowLog
+    trials: Path
+    reports: Path
+    commit: str
+
+
+def open_operation(operacion: Path) -> Operation:
+    """The registry the operation configuration names; refused if the name is not plain."""
+    op = load_operation_config(operacion)
+    if not re.fullmatch(REGISTRY_PATTERN, op.registry):
+        raise ValueError("registry must be a plain name: lowercase letters, digits, underscore")
+    trials, reports = trials_dir(op.registry), reports_dir(op.registry)
+    return Operation(
+        op=op,
+        config=load_config(op.model_config),
+        model_log=TrialLog(trials / TRIALS_FILE),
+        shadow_log=ShadowLog(trials / SHADOW_DIR / SHADOW_LOG_FILE),
+        trials=trials,
+        reports=reports,
+        commit=code_identity(),
+    )
+
+
+def download_snapshot(ctx: Operation) -> Path:
+    """Today's operation snapshot into data/snapshots/<today>/, refused if it exists."""
+    now = _utc_now()
+    snapshot_dir = SNAPSHOTS_DIR / now.date().isoformat()
+    if snapshot_dir.exists():  # checked before anything is fetched
+        raise FileExistsError(
+            f"{snapshot_dir.as_posix()} exists: use --snapshot {snapshot_dir.as_posix()}"
+        )
+    take_operation_snapshot(
+        ctx.config, ctx.op, snapshot_dir, http_get, now.isoformat(timespec="seconds")
+    )
+    print(f"[ok] snapshot -> {snapshot_dir.as_posix()}")
+    return snapshot_dir
+
+
+def run_exportar(
+    ctx: Operation, snapshot_dir: Path, curve: pd.DataFrame, analysis: Analysis
+) -> dict[str, Path]:
+    """The five CSV under reports/<registry>/csv/; `{file name: path}`."""
+    out = ctx.reports / CSV_DIR
+    paths = export_all(
+        ctx.shadow_log.records(),
+        ctx.model_log,
         analysis,
         curve,
-        config,
-        op,
-        macro_frame(snapshot_dir, config, op),
+        ctx.config,
+        ctx.op,
+        macro_frame(snapshot_dir, ctx.config, ctx.op),
         out,
         snapshot_hash(snapshot_dir),
         _utc_now().isoformat(timespec="seconds"),
     )
-    return out
+    print(f"[ok] csv -> {out.as_posix()}")
+    return paths
+
+
+def run_sombra(ctx: Operation, snapshot_dir: Path) -> tuple[ShadowRun, dict[str, Path]]:
+    """The weekly run on `snapshot_dir`, then the CSV refreshed with the new reading."""
+    run = run_shadow(
+        ctx.op, ctx.config, ctx.model_log, snapshot_dir, ctx.trials, ctx.reports, ctx.commit
+    )
+    return run, run_exportar(ctx, snapshot_dir, run.curve, run.analysis)
 
 
 def _month_close(analysis: Analysis, month: str) -> date:
@@ -93,6 +144,29 @@ def _month_close(analysis: Analysis, month: str) -> date:
     if in_month.empty:
         raise ValueError(f"no labelled days in {month}")
     return pd.Timestamp(in_month.index[-1]).date()
+
+
+def run_ficha(
+    ctx: Operation, snapshot_dir: Path, month: str, curve: pd.DataFrame, analysis: Analysis
+) -> tuple[dict[str, Any], Path]:
+    """The monthly report of `month` on the given outputs; its payload and Markdown path."""
+    rows = macro_panel(
+        macro_frame(snapshot_dir, ctx.config, ctx.op), ctx.op, _month_close(analysis, month)
+    )
+    payload = build_monthly(
+        month,
+        ctx.shadow_log.records(),
+        ctx.model_log,
+        analysis,
+        curve,
+        ctx.config,
+        ctx.op,
+        rows,
+        ctx.commit,
+    )
+    path = write_monthly(payload, ctx.op, ctx.reports / MONTHLY_DIR)
+    print(f"[ok] ficha -> {path.as_posix()}")
+    return payload, path
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -132,63 +206,44 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.min_weeks is not None and args.min_weeks < 1:
         parser.error("--min-weeks must be a positive number of weeks")
 
-    op = load_operation_config(args.operacion)
-    if not re.fullmatch(REGISTRY_PATTERN, op.registry):
-        parser.error("registry must be a plain name: lowercase letters, digits, underscore")
-    trials, reports = trials_dir(op.registry), reports_dir(op.registry)
-    config = load_config(op.model_config)
-    model_log = TrialLog(trials / TRIALS_FILE)
-    shadow_log = ShadowLog(trials / SHADOW_DIR / SHADOW_LOG_FILE)
-    commit = code_identity()
+    try:
+        ctx = open_operation(args.operacion)
+    except ValueError as error:
+        parser.error(str(error))
 
     snapshot_dir: Path
     if args.download:
-        now = _utc_now()
-        snapshot_dir = SNAPSHOTS_DIR / now.date().isoformat()
-        if snapshot_dir.exists():  # checked before anything is fetched
-            parser.error(
-                f"{snapshot_dir.as_posix()} exists: use --snapshot {snapshot_dir.as_posix()}"
-            )
-        take_operation_snapshot(
-            config, op, snapshot_dir, http_get, now.isoformat(timespec="seconds")
-        )
-        print(f"[ok] snapshot -> {snapshot_dir.as_posix()}")
+        try:
+            snapshot_dir = download_snapshot(ctx)
+        except FileExistsError as error:
+            parser.error(str(error))
     else:
         snapshot_dir = args.snapshot
 
     if args.stage == "sombra":
-        run = run_shadow(op, config, model_log, snapshot_dir, trials, reports, commit)
-        curve, analysis = run.curve, run.analysis
-    else:
-        curve, analysis = latest_analysis(config, model_log, snapshot_dir)
-
+        run_sombra(ctx, snapshot_dir)
+        return 0
+    curve, analysis = latest_analysis(ctx.config, ctx.model_log, snapshot_dir)
     if args.stage == "ficha":
-        month: str = args.mes
-        rows = macro_panel(macro_frame(snapshot_dir, config, op), op, _month_close(analysis, month))
-        payload = build_monthly(
-            month, shadow_log.records(), model_log, analysis, curve, config, op, rows, commit
-        )
-        path = write_monthly(payload, op, reports / MONTHLY_DIR)
-        print(f"[ok] ficha -> {path.as_posix()}")
+        run_ficha(ctx, snapshot_dir, args.mes, curve, analysis)
         return 0
     if args.stage == "evaluar-sombra":
         result = evaluate_shadow(
-            op,
-            config,
-            model_log,
-            shadow_log,
-            trials,
-            reports,
+            ctx.op,
+            ctx.config,
+            ctx.model_log,
+            ctx.shadow_log,
+            ctx.trials,
+            ctx.reports,
             curve,
             analysis,
-            commit,
+            ctx.commit,
             min_weeks=args.min_weeks,
         )
-        path = reports / f"{REPORT_PREFIX}{result['period']['hasta']}.md"
+        path = ctx.reports / f"{REPORT_PREFIX}{result['period']['hasta']}.md"
         print(f"[ok] evaluacion de sombra: {result['verdict']} -> {path.as_posix()}")
         return 0
-    out = _export(op, config, model_log, shadow_log, curve, analysis, snapshot_dir, reports)
-    print(f"[ok] csv -> {out.as_posix()}")
+    run_exportar(ctx, snapshot_dir, curve, analysis)
     return 0
 
 

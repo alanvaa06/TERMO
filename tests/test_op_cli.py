@@ -60,14 +60,10 @@ def _console_ok(out: str) -> list[str]:
     return lines
 
 
-@pytest.fixture(scope="module")
-def workspace(
-    desc2_registry: Desc2Registry, tmp_path_factory: pytest.TempPathFactory, curve: pd.DataFrame
-) -> Path:
+def make_workspace(desc2_registry: Desc2Registry, root: Path, curve: pd.DataFrame) -> Path:
     """A private registry copy, the two configurations and an operation snapshot of the FULL
     curve plus the macro series, laid out as the repository is (trials/, reports/, configs/)."""
     assert "rally fuerte" in DESC2_SMALL_CONFIG and "slope_long" not in DESC2_SMALL_CONFIG
-    root = tmp_path_factory.mktemp("termo-op-cli")
     registry = desc2_registry.copy_to(root)
     (root / "configs").mkdir()
     (root / MODEL_CONFIG).write_text(DESC2_SMALL_CONFIG, encoding="utf-8")
@@ -80,6 +76,13 @@ def workspace(
     get = fake_fred_frames([curve, make_macro(curve)])
     take_operation_snapshot(registry.config, op, root / SNAPSHOT, get, SNAPSHOT_DOWNLOADED_AT)
     return root
+
+
+@pytest.fixture(scope="module")
+def workspace(
+    desc2_registry: Desc2Registry, tmp_path_factory: pytest.TempPathFactory, curve: pd.DataFrame
+) -> Path:
+    return make_workspace(desc2_registry, tmp_path_factory.mktemp("termo-op-cli"), curve)
 
 
 @pytest.fixture
