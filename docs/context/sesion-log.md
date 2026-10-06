@@ -12,3 +12,4 @@
 - [2026-10-05]: holdout descriptivo abierto con aprobacion: NO-APTO solo por D4 (forma de curva); pendiente decision del usuario sobre como llevarlo al comite y modo sombra.
 - [2026-10-05]: desc2 registrado, corrido, reportado y con holdout 'ya visto'; primeras lecturas generadas; pendiente spec 4 (snapshot semanal, hoja en espanol, modo sombra) y merge a main.
 - [2026-10-06]: spec 4 disenado, implementado y corrido: primera hoja semanal real y fichas mensuales; merge a main.
+[2026-10-06]: reporte visual (spec 5) disenado con referencia HSBC TYCCLES, planificado e implementado con subagentes y revision en dos etapas; HTML fuera de git.

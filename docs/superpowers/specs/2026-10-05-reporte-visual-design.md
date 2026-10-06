@@ -5,7 +5,7 @@ Writer: Claude
 # TERMO — Spec 5: reporte visual semanal
 
 **Fecha:** 2026-10-05
-**Estado:** diseño aprobado en brainstorming; pendiente de revisión del spec escrito.
+**Estado:** implementado en `feat/reporte-visual` (2026-10-06); §3, §7 y §8 ajustados a lo implementado.
 **Documentos base:** [spec 4](2026-10-06-operacion-sombra-design.md) (operación en sombra, CSV y hoja), `src/termo/operation/html_report.py` (reporte actual), referencia visual HSBC *TYCCLES says UST max sell-off* (3 jun 2026), `docs/context/memory.md` (decisión de no publicar desempeño condicionado a que la fase sobreviva).
 
 ---
@@ -60,7 +60,7 @@ Colores de fase, fijos en todo el reporte: **rally fuerte** azul `#2a78d6`, **ra
 |---|---|---|---|
 | 0 | Portada | Fase en serif grande con el color de la fase; fecha de lectura, snapshot (hash corto) y commit; 3 viñetas; 4 KPI: confianza, días en fase, Δ10Y y Δ2Y del episodio (pb); termómetro de duración: banda P25–P75, mediana y marca del episodio actual, contra los episodios terminados de esa fase | "La curva sigue en {fase}: {días} días, {por encima / dentro / por debajo} del rango intercuartil histórico" |
 | 1 | 10Y por fase | Línea del DGS10 coloreada por la fase del JM, desde 1988. Selector 1A/3A/5A/10A/todo, vista inicial de 3A. Banda gris en los días con `periodo == "holdout"` de `historia_diaria.csv` | "El 10Y {subió / bajó} {x} pb desde que empezó el episodio de {fase}" |
-| 2 | Fase contra imitador | Área apilada de las 3 probabilidades del imitador y, encima, una franja con la fase del JM. Los días en que la fase de mayor probabilidad no coincide con la del JM se marcan | "Imitador y fase coinciden en el {n}% de los días del último año" |
+| 2 | Fase contra imitador | Dos franjas diarias alineadas (fase del JM y fase de mayor probabilidad del imitador) sobre el área apilada de las 3 probabilidades (muestreo semanal): los desacuerdos se ven como diferencias entre franjas | "Imitador y fase coinciden en el {n}% de los días del último año" |
 | 3 | Motores de hoy | Cascada SHAP: columna `base` → los 6 bloques → valor de la lectura (log-odds de la fase actual), de la fila de la fecha de lectura en `historia_diaria.csv`. Las top 5 variables salen de `hoja.json`. Barras con las 5 variables de mayor contribución, traducidas | "{bloque} explica la mayor parte de la lectura ({aporte:+.2f})" |
 | 4 | Motores en el tiempo | Área apilada con signo de la contribución de los 6 bloques, mismo selector de rango, fondo sombreado con el color de la fase de cada día. Nota fija: "Cada día explica su propia fase (log-odds); cuando cambia la fase, cambia lo que se explica." | "Desde {inicio del episodio} domina {bloque}" |
 | 5a | Curva hoy | Curva de 7 plazos hoy, hace 21, 63 y 252 días hábiles | "En 3 meses el 2A {subió / bajó} {x} pb y el 10A {y} pb: la curva se {aplanó / empinó}" |
@@ -129,12 +129,12 @@ Módulos nuevos en `src/termo/operation/visual/`:
 
 | Módulo | Responsabilidad | Interfaz |
 |---|---|---|
-| `datos.py` | Carga y valida | `cargar(dir_salida: Path, dir_snapshot: Path) -> DatosReporte` (dataclass inmutable: `hoja: dict`, `historia`, `episodios`, `macro`, `lecturas`, `alertas`, `curva: DataFrame`, `comentario: str \| None`) |
+| `datos.py` | Carga y valida | `cargar(dir_salida, dir_snapshot, config: CoreConfig, op: OperationConfig) -> DatosReporte` (dataclass inmutable: `hoja`, `historia`, `episodios`, `macro`, `curva`, nombres, bloques, series macro, textos, `comentario: str \| None`). No lee `lecturas.csv` ni `alertas.csv`: la alerta vigente sale de `hoja.json` |
 | `etiquetas.py` | Nombres en español | `bloque_es(nombre) -> str`, `variable_es(nombre) -> str` |
 | `calculos.py` | §5 | funciones puras sobre DataFrames |
 | `graficas.py` | Una figura por gráfica | `fig_<bloque>(datos, …) -> go.Figure`, template `TERMO`, `COLOR_FASE` |
 | `narrativa.py` | §6 | `titulares(datos) -> dict[str, Titular]` |
-| `pagina.py` | HTML final | `construir(dir_salida, dir_snapshot, generado: str) -> Path` (escribe `reporte.html`) |
+| `pagina.py` | HTML final | `construir(dir_salida, dir_snapshot, config, op, generado: str) -> Path` (escribe `reporte.html`) |
 
 `pagina.py`:
 - `plotly.offline.get_plotlyjs()` en un solo `<script>` al inicio.
@@ -147,7 +147,7 @@ Módulos nuevos en `src/termo/operation/visual/`:
 ### Flujo
 
 1. `run_week.main` igual que hoy hasta copiar los archivos a `output/<fecha>/`.
-2. Después: `visual.pagina.construir(out_dir, snapshot_dir, generado)`.
+2. Después: `visual.pagina.construir(out_dir, snapshot_dir, config, op, generado)`.
 3. Flag nuevo `--solo-reporte DIR`: exige `--snapshot` y es incompatible con `--download` y `--mes`. Solo ejecuta el paso 2.
 4. El reporte ya no depende de `--mes`; la ficha sigue saliendo como archivo aparte cuando se pide.
 
@@ -161,8 +161,9 @@ Módulos nuevos en `src/termo/operation/visual/`:
 ## 8. Errores (solo en la frontera)
 
 - `snapshot_hash(dir_snapshot)` ≠ `hoja.json["snapshot_hash"]` → `ValueError` con las dos huellas cortas. `run_week` lo convierte en `parser.error` (ASCII, salida ≠ 0).
-- Falta `hoja.json`, `historia_diaria.csv`, `episodios.csv`, `macro.csv` o `lecturas.csv` → `FileNotFoundError` con el nombre.
-- `alertas.csv` vacío, sin `comentario.md`, serie macro con huecos → el bloque muestra "sin datos" o anota el último dato disponible (como la hoja actual). No es error.
+- Falta `hoja.json`, `historia_diaria.csv`, `episodios.csv` o `macro.csv` → `FileNotFoundError` con el nombre.
+- Un CSV cuya línea `# snapshot_hash=` no es la de `hoja.json`, una historia que no termina en la fecha de lectura, o un último episodio que no es la fase de la lectura → `ValueError` ASCII.
+- Sin alerta, sin `comentario.md`, serie macro con huecos → el bloque muestra "sin datos" o anota el último dato disponible (como la hoja actual). No es error.
 - Salida de consola ASCII: `[ok] reporte -> output/<fecha>/reporte.html`.
 
 ---
