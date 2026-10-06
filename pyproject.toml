@@ -16,6 +16,7 @@ dependencies = [
     "pyyaml",
     "xgboost==3.4.1",
     "shap==0.52.0",
+    "plotly==7.1.0",
 ]
 
 [project.optional-dependencies]
