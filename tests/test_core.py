@@ -31,6 +31,7 @@ from termo.core import (
     save_labels,
     take_snapshot,
     verify_binding,
+    verify_configuration,
 )
 from termo.data.fred import DataValidationError
 from termo.data.loader import load_curve
@@ -204,6 +205,18 @@ def test_work_is_bound_to_what_was_registered(
     with pytest.raises(TrialLogError, match=named):
         verify_binding(log, current, current_hash, current_commit)
     verify_binding(log, config, data_hash, COMMIT)  # the registered combination passes
+
+
+def test_the_configuration_alone_binds_a_stage_that_takes_a_new_snapshot_every_time(
+    finished: Path, log: TrialLog, config: CoreConfig
+) -> None:
+    """The shadow operation recomputes on a fresh snapshot each week: it binds the
+    configuration, and only that; the snapshot and the code are not compared."""
+    verify_configuration(log, config)
+    with pytest.raises(TrialLogError, match="configuration"):
+        verify_configuration(log, replace(config, refit_weeks=13))
+    with pytest.raises(TrialLogError, match="no setup registration"):
+        verify_configuration(TrialLog(log.path.parent / "missing.jsonl"), config)
 
 
 def test_a_registration_that_predates_an_optional_key_reads_it_as_its_default(

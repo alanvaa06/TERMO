@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import shutil
 from collections.abc import Callable, Sequence
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import date
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -23,6 +25,7 @@ from termo.config import (
 
 if TYPE_CHECKING:
     from termo.dataset import ExperimentData
+    from termo.validation.trials import TrialLog
 
 FRED_URL_TEMPLATE = "https://fred.stlouisfed.org/graph/fredgraph.csv?id={series_id}"
 
@@ -258,3 +261,78 @@ def fake_fred_frames(frames: Sequence[pd.DataFrame]) -> Callable[[str], str]:
         raise AssertionError(f"unexpected url {url}")
 
     return get
+
+
+DESC2_COMMIT = "test-commit-desc2"
+SHADOW_DAYS = 60  # business days the full curve has after the registered history
+
+
+@dataclass(frozen=True)
+class Desc2Registry:
+    """A finished desc2 registry: registered, run, reported and holdout done, on `curve`."""
+
+    config: CoreConfig
+    log: TrialLog
+    snapshot_dir: Path  # the registered snapshot: the curve the registry saw
+    trials_dir: Path
+    reports_dir: Path
+    curve: pd.DataFrame
+    commit: str
+
+    def copy_to(self, root: Path) -> Desc2Registry:
+        """A private copy of the trials and reports (the snapshot is shared, read only)."""
+        from termo.validation.trials import TrialLog
+
+        trials, reports = root / "trials" / "desc2", root / "reports" / "desc2"
+        shutil.copytree(self.trials_dir, trials)
+        shutil.copytree(self.reports_dir, reports)
+        return replace(
+            self, log=TrialLog(trials / self.log.path.name), trials_dir=trials, reports_dir=reports
+        )
+
+
+def build_desc2_registry(
+    root: Path, curve: pd.DataFrame, config: CoreConfig, commit: str = DESC2_COMMIT
+) -> Desc2Registry:
+    """The four stages of spec 3 on `curve`, with the stage functions, in `root`.
+
+    The synthetic curve fails the real criteria, so the diagnostic is approved by a forged
+    APTO report before the holdout opens (as tests/test_desc_stages.py does).
+    """
+    from termo.core import registered_columns, take_snapshot
+    from termo.data.loader import load_curve
+    from termo.data.snapshot import snapshot_hash
+    from termo.dataset import prepare
+    from termo.descriptive.criteria import APTO
+    from termo.descriptive.stages import holdout_desc, register_desc, report_desc, run_desc
+    from termo.validation.trials import TrialLog
+
+    snapshot_dir = root / "data" / "snapshots" / "registered"
+    take_snapshot(config, snapshot_dir, fake_fred(curve), "2026-10-02T00:00:00+00:00")
+    trials, reports = root / "trials" / "desc2", root / "reports" / "desc2"
+    log = TrialLog(trials / "trials.jsonl")
+    data_hash = snapshot_hash(snapshot_dir)
+    pre = load_curve(snapshot_dir, config.series, config.start, config.holdout_start)
+    register_desc(config, pre, log, data_hash, commit)
+    data = prepare(pre, config, registered_columns(log))
+    run_desc(data, log, trials, data_hash, commit, echo=lambda _: None)
+    report_desc(data, log, trials, reports, data_hash, commit)
+    last = log.last_report()
+    assert last is not None
+    if last["verdict"] != APTO:
+        payload = {k: v for k, v in last.items() if k not in {"kind", "trial_id", "at"}}
+        log.record_report({**payload, "verdict": APTO})
+    holdout_desc(config, snapshot_dir, log, trials, reports, commit)
+    return Desc2Registry(config, log, snapshot_dir, trials, reports, curve, commit)
+
+
+@pytest.fixture(scope="session")
+def desc2_registry(
+    tmp_path_factory: pytest.TempPathFactory, curve: pd.DataFrame, desc2_config: CoreConfig
+) -> Desc2Registry:
+    """The registry built on the curve without its last SHADOW_DAYS: what the shadow extends.
+
+    Tests that run the shadow stage work on `copy_to` copies: this one is never written.
+    """
+    root = tmp_path_factory.mktemp("termo-desc2-registry")
+    return build_desc2_registry(root, curve.iloc[:-SHADOW_DAYS], desc2_config)

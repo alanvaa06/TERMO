@@ -276,12 +276,16 @@ def _refuse_changes(bound: Iterable[tuple[str, Any, Any]]) -> None:
         raise TrialLogError("this does not match the registration; changed: " + ", ".join(changed))
 
 
+def _configuration_binding(setup: Mapping[str, Any], config: CoreConfig) -> tuple[str, Any, Any]:
+    registered = _with_later_defaults(setup["config"]["config"], config)
+    return ("configuration", registered, config_fingerprint(config))
+
+
 def _data_binding(
     setup: Mapping[str, Any], config: CoreConfig, snapshot_hash: str
 ) -> list[tuple[str, Any, Any]]:
-    registered = _with_later_defaults(setup["config"]["config"], config)
     return [
-        ("configuration", registered, config_fingerprint(config)),
+        _configuration_binding(setup, config),
         ("data snapshot", setup["snapshot_hash"], snapshot_hash),
     ]
 
@@ -305,6 +309,16 @@ def verify_data_binding(log: TrialLog, config: CoreConfig, snapshot_hash: str) -
     outputs, so later code or a library upgrade must still be able to produce it.
     """
     _refuse_changes(_data_binding(_setup(log), config, snapshot_hash))
+
+
+def verify_configuration(log: TrialLog, config: CoreConfig) -> None:
+    """Refuse any configuration other than the registered one; nothing else is compared.
+
+    For a stage that recomputes on a new snapshot every time (the shadow operation): the
+    snapshot is new by design, and the code and the libraries prove themselves there by
+    reproducing the registered history byte for byte.
+    """
+    _refuse_changes([_configuration_binding(_setup(log), config)])
 
 
 def save_labels(labels: pd.Series, path: Path) -> str:

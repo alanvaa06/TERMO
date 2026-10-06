@@ -38,7 +38,7 @@ from termo.descriptive.criteria import (
     verdict,
 )
 from termo.experiment import effective_penalty
-from termo.regime.model import jump_fitter
+from termo.regime.model import RegimeFitter, jump_fitter
 from termo.surrogate.explain import block_map, block_sums, explain, top_variables
 from termo.surrogate.model import SurrogateParams, surrogate_walk
 from termo.validation.trials import RecordKind, TrialLog, TrialLogError, TrialStatus
@@ -128,16 +128,26 @@ class Analysis:
     shap_top: pd.DataFrame  # one column "top": JSON list of [variable, contribution]
 
 
+def _fitter(data: ExperimentData) -> RegimeFitter:
+    config = data.config
+    penalty = effective_penalty(config, config.jump_penalties[0], len(data.columns))
+    return jump_fitter(config.k_values[0], penalty)
+
+
+def frozen_map(data: ExperimentData) -> pd.Series:
+    """The phase of a jump model fitted once at the frozen cutoff, every later day."""
+    n_states = data.config.k_values[0]
+    walk = run_walkforward(data.frozen_refits, _fitter(data), n_states, data.daily_change_10y)
+    return walk.oos_labels
+
+
 def analyse(data: ExperimentData) -> Analysis:
     """Jump model, frozen jump model, surrogate and SHAP over every out-of-sample day."""
     config = data.config
     desc = _desc(config)
     n_states = config.k_values[0]
-    penalty = effective_penalty(config, config.jump_penalties[0], len(data.columns))
-    fitter = jump_fitter(n_states, penalty)
-    target = data.daily_change_10y
-    walk = run_walkforward(data.refits, fitter, n_states, target)
-    frozen = run_walkforward(data.frozen_refits, fitter, n_states, target).oos_labels
+    walk = run_walkforward(data.refits, _fitter(data), n_states, data.daily_change_10y)
+    frozen = frozen_map(data)
     surrogates = surrogate_walk(data.refits, walk.fits, n_states, surrogate_params(config))
 
     blocks: list[pd.DataFrame] = []
