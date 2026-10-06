@@ -109,7 +109,7 @@ def test_macro_panel_gives_value_percentile_and_change_by_hand(
     day = curve.index[2000]
     panel = macro_panel(frame, op, day.date())
     assert [row["serie"] for row in panel] == [
-        "prima por plazo 10 anos (Kim-Wright)",
+        "prima por plazo 10 años (Kim-Wright)",
         "DGS2 - fed funds efectiva",
     ]
     window = frame["THREEFYTP10"].loc[:day].iloc[-op.percentile_window_days :]

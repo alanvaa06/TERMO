@@ -1,0 +1,319 @@
+"""The whole page: self-contained, Plotly once, every block, escaped, comment optional."""
+
+from __future__ import annotations
+
+import html
+import re
+from dataclasses import replace
+from pathlib import Path
+
+import pytest
+
+from conftest import make_desc2_config
+from termo.operation.config import load_operation_config
+from termo.operation.sheet_es import FIDELITY_WARNING
+from termo.operation.visual.calculos import Posicion
+from termo.operation.visual.datos import DatosReporte
+from termo.operation.visual.narrativa import titulares
+from termo.operation.visual.pagina import (
+    ANCLAS,
+    ARCHIVO,
+    NOTA_MOTORES,
+    SCRIPT_PAGINA,
+    _num,
+    _termometro,
+    construir,
+    render,
+)
+from visual_fixture import OP_CONFIG, PLOTLY_INICIO, en_disco, make_datos, sin_plotlyjs
+
+RECURSO_EXTERNO = re.compile(r"""(?:src|href)\s*=\s*["']?https?:""", re.IGNORECASE)
+GENERADO = "1992-09-01T10:00:00+00:00"
+
+
+@pytest.fixture(scope="module")
+def datos() -> DatosReporte:
+    return make_datos()
+
+
+@pytest.fixture(scope="module")
+def page(datos: DatosReporte) -> str:
+    return render(datos, GENERADO)
+
+
+def _seccion(page: str, ancla: str) -> str:
+    inicio = page.index(f'<section id="{ancla}"')
+    return page[inicio : page.index("</section>", inicio)]
+
+
+def test_a_self_contained_spanish_page(page: str) -> None:
+    assert page.lower().startswith("<!doctype html>")
+    assert '<html lang="es"' in page and '<meta charset="utf-8">' in page
+    assert page.count(PLOTLY_INICIO) == 1
+    assert not RECURSO_EXTERNO.search(sin_plotlyjs(page))
+    assert "@media print" in page
+
+
+def test_the_page_is_light_whatever_the_system_theme(page: str) -> None:
+    assert '<meta name="color-scheme" content="light">' in page
+    assert "color-scheme:light" in page
+    assert "prefers-color-scheme" not in sin_plotlyjs(page)
+
+
+def test_every_block_is_there_once_and_in_the_index(page: str) -> None:
+    for ancla in ANCLAS:
+        assert page.count(f'<section id="{ancla}"') == 1, ancla
+        assert f'href="#{ancla}"' in page
+    assert 'id="comentario"' not in page
+
+
+def test_charts_are_numbered_and_sourced(page: str) -> None:
+    numeros = [int(n) for n in re.findall(r"<figcaption>(\d+)\. ", page)]
+    assert numeros == list(range(1, len(numeros) + 1)) and len(numeros) >= 12
+    assert page.count('class="fuente"') == len(numeros)
+    assert page.count("Frecuencias del pasado, no pronóstico.") >= 3
+
+
+def test_the_cover_and_the_validation(datos: DatosReporte, page: str) -> None:
+    assert "<h1>Venta</h1>" in page
+    assert "La curva lleva " in page and " días en venta" in page
+    assert datos.textos["descargo"] in page
+    assert "Nombres de fase elegidos tras el holdout; los valida solo la sombra." in page
+    assert str(datos.hoja["snapshot_hash"])[:12] in page
+    assert GENERADO in page
+    meta = re.search(r'<section id="portada"><p class="meta">([^<]*)</p>', page)
+    assert meta, "cover meta line"
+    assert f"lectura {datos.fecha:%Y-%m-%d}" in meta.group(1)
+    assert f"snapshot {str(datos.hoja['snapshot_hash'])[:12]}" in meta.group(1)
+    assert f"código {str(datos.hoja['code_commit'])[:12]}" in meta.group(1)
+
+
+def _proxima(datos: DatosReporte, semanas: int) -> str:
+    validacion = datos.lectura["validation"]
+    sombra = {**validacion["sombra"], "proxima_evaluacion_semanas": semanas}
+    lectura = {**datos.lectura, "validation": {**validacion, "sombra": sombra}}
+    return _seccion(render(replace(datos, hoja={**datos.hoja, "reading": lectura}), GENERADO),
+                    "validacion")
+
+
+def test_charts_stack_in_one_column(page: str) -> None:
+    # Plotly sizes each chart to the full width: side by side, two charts overlap
+    assert 'class="par"' not in page and ".par{" not in sin_plotlyjs(page)
+
+
+def test_chart_titles_and_drivers_note(datos: DatosReporte, page: str) -> None:
+    assert "Cambio mediano a 1 mes por plazo, en cada fase" in page
+    franja = f"Fase de cada día, {datos.historia.index[0]:%Y} a {datos.fecha:%Y}"
+    assert re.search(rf"<figcaption>\d+\. {re.escape(franja)}</figcaption>", page)
+    motores = _seccion(page, "motores-tiempo")
+    assert f'<p class="nota">{NOTA_MOTORES}</p>' in motores
+    assert NOTA_MOTORES == (
+        "Cada día muestra la contribución a la fase de ese día, en log-odds. Cuando la fase "
+        "cambia, la gráfica pasa a explicar otra probabilidad."
+    )
+
+
+def _con_validacion(datos: DatosReporte, veredictos: list[dict[str, str]], semanas: int) -> str:
+    validacion = datos.lectura["validation"]
+    sombra = {**validacion["sombra"], "semanas": semanas}
+    lectura = {
+        **datos.lectura,
+        "validation": {**validacion, "registered_verdicts": veredictos, "sombra": sombra},
+    }
+    return _seccion(render(replace(datos, hoja={**datos.hoja, "reading": lectura}), GENERADO),
+                    "validacion")
+
+
+def test_the_validation_heading_states_the_verdicts(datos: DatosReporte, page: str) -> None:
+    assert "<h2>Diagnóstico APTO y holdout APTO; 1 semana de sombra</h2>" in _seccion(
+        page, "validacion"
+    )
+    solo = _con_validacion(datos, [{"stage": "diagnostic", "verdict": "no-apto"}], 4)
+    assert "<h2>Diagnóstico NO APTO; 4 semanas de sombra</h2>" in solo
+
+
+def test_next_shadow_evaluation_is_pluralised(datos: DatosReporte) -> None:
+    assert ">en 1 semana<" in _proxima(datos, 1)
+    assert ">en 3 semanas<" in _proxima(datos, 3)
+    assert ">ya puede correrse<" in _proxima(datos, 0)
+
+
+def _con_variables(datos: DatosReporte, n: int) -> str:
+    variables = (datos.lectura["top_variables"] * 12)[:n]
+    lectura = {**datos.lectura, "top_variables": variables}
+    return render(replace(datos, hoja={**datos.hoja, "reading": lectura}), GENERADO)
+
+
+def test_the_variables_chart_title_counts_the_sheet_variables(
+    datos: DatosReporte, page: str
+) -> None:
+    assert len(datos.lectura["top_variables"]) == 5
+    assert "Las cinco variables de mayor contribución" in page
+    assert "Las tres variables de mayor contribución" in _con_variables(datos, 3)
+    assert "La variable de mayor contribución" in _con_variables(datos, 1)
+    assert "Las 12 variables de mayor contribución" in _con_variables(datos, 12)
+
+
+def test_text_is_escaped(datos: DatosReporte) -> None:
+    textos = {**datos.textos, "descargo": "a <b> & c"}
+    page = render(replace(datos, textos=textos), GENERADO)
+    assert "a &lt;b&gt; &amp; c" in page and "a <b> & c" not in page
+
+
+def test_the_analyst_comment_appears_only_when_written(datos: DatosReporte) -> None:
+    page = render(replace(datos, comentario="## Lectura\n\nLa curva <sube>."), GENERADO)
+    assert page.count('<section id="comentario"') == 1
+    comentario = _seccion(page, "comentario")
+    assert "<h2>Comentario del analista</h2>" in comentario
+    assert "(no generado por TERMO)" in comentario
+    assert "<h4>Lectura</h4>" in comentario and "La curva &lt;sube&gt;." in page
+
+
+def test_analyst_headings_never_compete_with_the_page_headings(datos: DatosReporte) -> None:
+    page = render(replace(datos, comentario="# Titulo\n\n## Sub\n\nTexto."), GENERADO)
+    comentario = _seccion(page, "comentario")
+    assert "<h3>Titulo</h3>" in comentario and "<h4>Sub</h4>" in comentario
+    assert page.count("<h1>") == 1  # only the cover's phase
+    assert comentario.count("<h2>") == 1  # only the section's own heading
+
+
+def test_unvalidated_drivers_carry_the_fidelity_warning(
+    datos: DatosReporte, page: str
+) -> None:
+    assert FIDELITY_WARNING not in page
+    lectura = {**datos.lectura, "drivers_validated": False}
+    fallida = render(replace(datos, hoja={**datos.hoja, "reading": lectura}), GENERADO)
+    motores = _seccion(fallida, "motores")
+    assert motores.index(FIDELITY_WARNING) < motores.index("<figure")
+    assert fallida.count(FIDELITY_WARNING) == 1
+
+
+def test_build_writes_the_report_next_to_the_files(tmp_path: Path) -> None:
+    _, salida, snapshot = en_disco(tmp_path)
+    path = construir(
+        salida, snapshot, make_desc2_config(), load_operation_config(OP_CONFIG), GENERADO
+    )
+    assert path == salida / ARCHIVO
+    raw = path.read_bytes()
+    assert b"\r\n" not in raw and raw.decode("utf-8").count(PLOTLY_INICIO) == 1
+
+
+def test_every_headline_is_on_the_page(datos: DatosReporte, page: str) -> None:
+    for clave, titular in titulares(datos).items():
+        assert html.escape(titular.texto, quote=True) in page, clave
+    assert '<p class="bajada">' in page  # the signature chart's headline
+
+
+def test_accent_text_is_dark_enough_on_the_light_paper(page: str) -> None:
+    # 'venta': the base hue for fills, its darker tone for text on the paper
+    assert '--acento:#e34948;--acento-texto-claro:#cc4241"' in page
+    aviso = re.search(r"\.aviso\{[^}]*\}", page)
+    assert aviso and "color:var(--tinta)" in aviso.group(0)
+    assert "border:1px solid var(--acento-texto)" in aviso.group(0)
+    assert re.search(r"h1\{[^}]*color:var\(--acento-texto\)", page)
+
+
+def test_the_page_script_follows_x_and_resizes_for_print() -> None:
+    assert "plotly_relayout" in SCRIPT_PAGINA and "ajustar_y" in SCRIPT_PAGINA
+    assert "beforeprint" in SCRIPT_PAGINA and "afterprint" in SCRIPT_PAGINA
+    assert "Plotly.Plots.resize" in SCRIPT_PAGINA
+    assert "matchMedia" not in SCRIPT_PAGINA  # no theme switching
+
+
+def test_print_uses_the_light_palette_without_buttons(page: str) -> None:
+    impresion = page[page.index("@media print") :]
+    assert "--papel:#fbfaf7" in impresion and ".rangeselector{display:none}" in impresion
+    assert "print-color-adjust:exact" in page
+
+
+def test_navigation_and_mobile_anchors(page: str) -> None:
+    assert '<nav aria-label="Índice">' in page
+    assert "scroll-margin-top:48px" in page
+
+
+def test_cover_notices(datos: DatosReporte) -> None:
+    lectura = {**datos.lectura, "low_confidence": True}
+    alerta = {"fecha": "1992-08-28", "de": "rally <fuerte>", "a": "venta", "confianza": 0.7}
+    page = render(replace(datos, hoja={**datos.hoja, "reading": lectura, "alert": alerta}),
+                  GENERADO)
+    portada = _seccion(page, "portada")
+    assert '<span class="aviso">confianza baja</span>' in portada
+    assert "cambio de fase: rally &lt;fuerte&gt; a venta" in portada
+
+
+def test_validation_escapes_at_the_sink(datos: DatosReporte) -> None:
+    validacion = datos.lectura["validation"]
+    por_fase = [{**validacion["by_phase"][0], "name": "<x> & y"}, *validacion["by_phase"][1:]]
+    veredictos = [{"stage": "diagnostic", "verdict": "<apto>"}]
+    lectura = {
+        **datos.lectura,
+        "validation": {**validacion, "by_phase": por_fase, "registered_verdicts": veredictos},
+    }
+    page = render(replace(datos, hoja={**datos.hoja, "reading": lectura}), GENERADO)
+    caja = _seccion(page, "validacion")
+    assert "&lt;x&gt; &amp; y" in caja and "&lt;APTO&gt;" in caja and "<x>" not in caja
+
+
+def test_missing_statistics_show_as_a_dash() -> None:
+    assert _num(None) == "-" and _num(0.5) == "0.50" and _num(49.6, 0) == "50"
+
+
+def _izquierda(termometro: str, clase: str) -> float:
+    encontrado = re.search(rf'class="{clase}" style="left:([\d.]+)%', termometro)
+    assert encontrado, clase
+    return float(encontrado.group(1))
+
+
+def test_thermometer_without_history() -> None:
+    texto = _termometro(Posicion(40, 0, None, None, None))
+    assert "Sin episodios terminados" in texto and 'class="termometro"' not in texto
+
+
+def test_thermometer_with_few_episodes_shows_only_the_median() -> None:
+    texto = _termometro(Posicion(40, 1, 50.0, 50.0, 50.0))
+    assert 'class="banda"' not in texto and 'class="mediana"' in texto
+    assert "1 episodio terminado de" in texto
+    assert "menos de 4" in texto
+    tres = _termometro(Posicion(40, 3, 30.0, 50.0, 70.0))
+    assert "3 episodios terminados" in tres and 'class="banda"' not in tres
+
+
+def test_thermometer_positions() -> None:
+    debajo = _termometro(Posicion(10, 6, 30.0, 50.0, 70.0))
+    assert _izquierda(debajo, "hoy") < _izquierda(debajo, "banda")
+    assert "6 episodios terminados" in debajo
+    # the right end of the scale is its maximum, not today's count
+    assert debajo.endswith("<span>80 días</span></div></div>")  # 70 * 1.15
+    encima = _termometro(Posicion(100, 6, 30.0, 50.0, 70.0))
+    banda = _izquierda(encima, "banda")
+    ancho = float(re.search(r"width:([\d.]+)%", encima).group(1))  # type: ignore[union-attr]
+    assert _izquierda(encima, "hoy") > banda + ancho
+    assert _izquierda(encima, "hoy") <= 100.0
+    assert "<span>115 días</span>" in encima
+
+
+def test_the_holdout_band_is_named_under_the_ten_year_chart(page: str) -> None:
+    seccion = page[page.index('<section id="tasa-10a"') : page.index('<section id="imitador"')]
+    assert "La banda gris marca el periodo holdout, ya abierto." in seccion
+
+
+def test_verdicts_live_in_the_headline_only(page: str) -> None:
+    validacion = _seccion(page, "validacion")
+    assert "Veredictos registrados" not in validacion and "diagnostic:" not in validacion
+
+
+def test_the_reading_guide_follows_the_cover(datos: DatosReporte, page: str) -> None:
+    assert page.index('<section id="portada"') < page.index('<section id="guia"')
+    assert page.index('<section id="guia"') < page.index('<section id="tasa-10a"')
+    guia = _seccion(page, "guia")
+    for termino in ("Fases", "Variables", "Imitador y confianza", "Contribuciones SHAP",
+                    "Holdout y sombra"):
+        assert f"<dt>{termino}</dt>" in guia
+    holdout = datos.historia.index[datos.historia["periodo"] == "holdout"]
+    sombra = datos.historia.index[datos.historia["periodo"] == "sombra"]
+    assert f"Del {holdout[0]:%Y-%m-%d} al {holdout[-1]:%Y-%m-%d}" in guia
+    assert f"desde el {sombra[0]:%Y-%m-%d}" in guia
+    ciclo = datos.lectura["validation"]["sombra"]
+    assert f"cada {ciclo['semanas'] + ciclo['proxima_evaluacion_semanas']} semanas" in guia
+    assert "139 variables" in guia and "no su nivel" in guia
+    assert '<a href="#guia">Cómo leer</a>' in page

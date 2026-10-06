@@ -1,10 +1,10 @@
-"""The HTML of the weekly deliverable: the sheet's Markdown subset, self-contained page."""
+"""The Markdown subset as HTML (the analyst's comment) and the UTF-8 writer."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from termo.operation.html_report import md_to_html, render_html, write_html
+from termo.operation.html_report import md_to_html, write_html
 
 
 def test_headings_bold_and_paragraphs() -> None:
@@ -62,37 +62,6 @@ def test_empty_lines_separate_paragraphs_and_produce_nothing() -> None:
     assert html.count("<p>") == 2
     assert "<p></p>" not in html
     assert md_to_html("") == ""
-
-
-def test_render_html_is_a_self_contained_spanish_page_with_the_sections_in_order() -> None:
-    sections = [
-        ("Hoja semanal", "# Hoja\n\n| a | b |\n|---|---|\n| 1 | 2 |"),
-        ("Ficha mensual", "## Mes"),
-    ]
-    page = render_html(
-        sections,
-        title="TERMO — semana del 1999-03-19",
-        generated_at="1999-03-22T10:00:00+00:00",
-    )
-    assert page.lower().startswith("<!doctype html>")
-    assert '<html lang="es">' in page
-    assert '<meta charset="utf-8">' in page
-    assert "<title>TERMO — semana del 1999-03-19</title>" in page
-    assert "http" not in page.lower()
-    assert "<script" not in page.lower()
-    assert "<style>" in page
-    assert page.count("<section") == 2
-    assert page.index("Hoja semanal") < page.index("<h1>Hoja</h1>") < page.index("Ficha mensual")
-    assert page.index("Ficha mensual") < page.index("<h2>Mes</h2>")
-    assert "<table>" in page
-    assert "1999-03-22T10:00:00+00:00" in page
-    assert "<footer" in page
-
-
-def test_render_html_escapes_the_title_and_section_headings() -> None:
-    page = render_html([("a <b>", "x")], title="t & u", generated_at="now")
-    assert "<title>t &amp; u</title>" in page
-    assert "a &lt;b&gt;" in page
 
 
 def test_write_html_is_utf8_with_unix_newlines(tmp_path: Path) -> None:

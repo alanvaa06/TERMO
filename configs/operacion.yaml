@@ -3,7 +3,7 @@ registry: desc2
 model_config: configs/desc2.yaml
 macro:
   - series_id: THREEFYTP10
-    name: prima por plazo 10 anos (Kim-Wright)
+    name: prima por plazo 10 años (Kim-Wright)
     spread_against: null
   - series_id: DFF
     name: fed funds efectiva
@@ -16,4 +16,4 @@ texts:
   descargo: "TERMO describe la fase actual de la curva. No anticipa la tasa a 10 años: en 62 pruebas registradas las fases no superaron a la inercia."
   nota_confianza: "El imitador es sobreconfiado: cuando dice 0.98 acierta cerca del 89% (medido en holdout). La confianza es su probabilidad, no una probabilidad calibrada."
   rotulo_historia: "Frecuencias del pasado, no pronóstico; no probadas en holdout."
-  no_dice: "Lo que el modelo NO dice: hacia dónde irá la tasa ni qué posición tomar."
+  no_dice: "El modelo no indica hacia dónde va la tasa ni qué posición tomar."
