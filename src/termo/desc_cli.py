@@ -7,7 +7,6 @@ import re
 from collections.abc import Sequence
 from datetime import date
 from pathlib import Path
-from typing import Any
 
 import pandas as pd
 
@@ -27,17 +26,15 @@ from termo.descriptive.stages import (
     HOLDOUT_DIR,
     PRE_HOLDOUT_DIR,
     desc_trial_id,
-    diagnostic_report,
-    failed_checks,
     holdout_desc,
     holdout_result,
     load_analysis,
     register_desc,
     report_desc,
     run_desc,
+    validation_from_log,
 )
 from termo.reading import (
-    FIDELITY_CHECK,
     LOST_HOLDOUT,
     build_reading,
     span_periods,
@@ -74,32 +71,10 @@ def _read(args: argparse.Namespace, log: TrialLog, data_hash: str, commit: str) 
     # the reading binds the data, not the code: later code must still read this log
     verify_data_binding(log, config, data_hash)
     day: date = args.date
-    report = diagnostic_report(log)
     trial = desc_trial_id(config)
-    if report is None or trial not in log.results():
-        raise TrialLogError("no reading: run the run and report stages first")
+    validation = validation_from_log(log, config)
     holdout = holdout_result(log)
     lost = holdout is None and log.holdout_opened()
-    holdout_status: str | None = None if holdout is None else str(holdout["verdict"])
-    if lost:
-        holdout_status = LOST_HOLDOUT
-    governing = report if holdout is None else holdout
-    failed = failed_checks(governing)
-    registered = [{"stage": "diagnostic", "verdict": str(report["verdict"])}]
-    if holdout is not None:
-        registered.append({"stage": "holdout", "verdict": str(holdout["verdict"])})
-    validation: dict[str, Any] = {
-        "diagnostic": str(report["verdict"]),
-        "holdout": holdout_status,
-        "failed_checks": failed,
-        "fidelity_failed": FIDELITY_CHECK in failed,
-        # None for a report logged before the table existed; the reading says so
-        "by_phase": governing.get("by_phase"),
-        "registered_verdicts": registered,
-    }
-    desc = config.descriptive
-    if desc is not None and desc.holdout_already_seen:
-        validation["holdout_seen_by"] = desc.holdout_seen_by
     in_holdout = pd.Timestamp(day) >= pd.Timestamp(config.holdout_start)
     if in_holdout and holdout is None:
         raise TrialLogError(

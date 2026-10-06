@@ -223,6 +223,38 @@ def failed_checks(report: Mapping[str, Any]) -> list[str]:
     return [str(c["name"]) for c in report["checks"] if c["passed"] is False]
 
 
+def validation_from_log(log: TrialLog, config: CoreConfig) -> dict[str, Any]:
+    """The validation status of the registered tool, as every reading and sheet states it."""
+    # imported here: termo.reading imports this module for its own tables
+    from termo.reading import FIDELITY_CHECK, LOST_HOLDOUT
+
+    report = diagnostic_report(log)
+    if report is None or desc_trial_id(config) not in log.results():
+        raise TrialLogError("no reading: run the run and report stages first")
+    holdout = holdout_result(log)
+    holdout_status: str | None = None if holdout is None else str(holdout["verdict"])
+    if holdout is None and log.holdout_opened():
+        holdout_status = LOST_HOLDOUT
+    governing = report if holdout is None else holdout
+    failed = failed_checks(governing)
+    registered = [{"stage": "diagnostic", "verdict": str(report["verdict"])}]
+    if holdout is not None:
+        registered.append({"stage": "holdout", "verdict": str(holdout["verdict"])})
+    validation: dict[str, Any] = {
+        "diagnostic": str(report["verdict"]),
+        "holdout": holdout_status,
+        "failed_checks": failed,
+        "fidelity_failed": FIDELITY_CHECK in failed,
+        # None for a report logged before the table existed; the reading says so
+        "by_phase": governing.get("by_phase"),
+        "registered_verdicts": registered,
+    }
+    desc = config.descriptive
+    if desc is not None and desc.holdout_already_seen:
+        validation["holdout_seen_by"] = desc.holdout_seen_by
+    return validation
+
+
 def _write_bytes(path: Path, data: bytes) -> None:
     path.write_bytes(data)
 
