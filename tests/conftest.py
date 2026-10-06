@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import replace
 from datetime import date
 from typing import TYPE_CHECKING
@@ -231,3 +231,30 @@ def make_desc2_config() -> CoreConfig:
 @pytest.fixture(scope="session")
 def desc2_config() -> CoreConfig:
     return make_desc2_config()
+
+
+def make_macro(curve: pd.DataFrame, seed: int = 5) -> pd.DataFrame:
+    """Two context series on the curve's calendar plus weekends for DFF, as FRED serves them."""
+    rng = np.random.default_rng(seed)
+    premium = pd.Series(np.cumsum(0.01 * rng.normal(size=len(curve))) + 1.0, index=curve.index)
+    daily = pd.date_range(curve.index[0], curve.index[-1], freq="D")
+    fed_funds = pd.Series(
+        np.round(3.0 + np.cumsum(0.002 * rng.normal(size=len(daily))), 2), index=daily
+    )
+    return pd.DataFrame({"THREEFYTP10": premium, "DFF": fed_funds})
+
+
+def fake_fred_frames(frames: Sequence[pd.DataFrame]) -> Callable[[str], str]:
+    """An HTTP getter serving several frames, one FRED CSV per column; NaN rows are blank."""
+
+    def get(url: str) -> str:
+        for frame in frames:
+            for series_id in frame.columns:
+                if url == FRED_URL_TEMPLATE.format(series_id=series_id):
+                    column = frame[series_id].dropna()
+                    lines = [f"observation_date,{series_id}"]
+                    lines += [f"{d:%Y-%m-%d},{v:.4f}" for d, v in column.items()]
+                    return "\n".join(lines) + "\n"
+        raise AssertionError(f"unexpected url {url}")
+
+    return get
