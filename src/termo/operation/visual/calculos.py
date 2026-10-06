@@ -6,6 +6,7 @@ A value assigned to a day uses only that day and earlier ones. The pooled freque
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
@@ -17,7 +18,12 @@ from termo.validation.metrics import BP_PER_PERCENT
 DIAS_MES = 21
 DIAS_ANIO = 252
 TOLERANCIA_PARALELO_PB = 1.0
-ATRAS: dict[str, int] = {"hoy": 0, "hace 1m": 21, "hace 3m": 63, "hace 1a": 252}
+ATRAS: dict[str, int] = {
+    "hoy": 0,
+    "hace 1m": DIAS_MES,
+    "hace 3m": 3 * DIAS_MES,
+    "hace 1a": DIAS_ANIO,
+}
 
 
 class Cuadrante(StrEnum):
@@ -85,16 +91,32 @@ def acuerdo(historia: pd.DataFrame, nombres: Sequence[str], dias: int = DIAS_ANI
     return float((fase_imitador(ventana, nombres) == ventana["fase"]).mean())
 
 
+def paralelo(
+    cambio_2y: float, cambio_10y: float, tolerancia: float = TOLERANCIA_PARALELO_PB
+) -> bool:
+    """Both tenors moved by the same bp, up to `tolerancia`.
+
+    Changes are 2-decimal yield differences x100, so a 1 bp gap can come out as
+    0.99999999999993 or 1.0000000000000009: the gap is rounded before comparing.
+    """
+    return round(abs(cambio_2y - cambio_10y), 6) < tolerancia
+
+
 def cuadrante(
     cambio_2y: float, cambio_10y: float, tolerancia: float = TOLERANCIA_PARALELO_PB
 ) -> Cuadrante:
-    """Bear/bull by the sign of both moves; flattener when the 2Y moved up more."""
-    if abs(cambio_2y - cambio_10y) < tolerancia:
+    """Bear/bull by the sign of both moves; flattener when the 2Y moved up more.
+
+    A move of exactly 0 joins the side of the other tenor.
+    """
+    if math.isnan(cambio_2y) or math.isnan(cambio_10y):
+        raise ValueError("cuadrante con un cambio NaN")
+    if paralelo(cambio_2y, cambio_10y, tolerancia):
         return Cuadrante.PARALELO
     aplana = cambio_2y > cambio_10y
-    if cambio_2y > 0 and cambio_10y > 0:
+    if cambio_2y >= 0 and cambio_10y >= 0:
         return Cuadrante.BEAR_FLATTENER if aplana else Cuadrante.BEAR_STEEPENER
-    if cambio_2y < 0 and cambio_10y < 0:
+    if cambio_2y <= 0 and cambio_10y <= 0:
         return Cuadrante.BULL_FLATTENER if aplana else Cuadrante.BULL_STEEPENER
     return Cuadrante.MIXTO
 
@@ -112,7 +134,7 @@ def cuadrantes(episodios: pd.DataFrame) -> pd.Series:
 
 
 def curvas_pasadas(curva: pd.DataFrame, fecha: pd.Timestamp) -> pd.DataFrame:
-    """The curve on the last row on or before `fecha` and 21, 63 and 252 rows earlier."""
+    """The curve on the last row on or before `fecha` and ATRAS rows earlier."""
     hasta = curva.loc[:fecha]
     ultimo = len(hasta) - 1
     filas = {

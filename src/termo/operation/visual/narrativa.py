@@ -7,6 +7,7 @@ DatosReporte and calculos.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from termo.operation.monthly import transitions
@@ -29,6 +30,10 @@ CLAVES = (
 )
 PLAZOS = {"DGS1": "1A", "DGS2": "2A", "DGS3": "3A", "DGS5": "5A", "DGS7": "7A", "DGS10": "10A",
           "DGS30": "30A"}
+NO_VALIDADO = (
+    "Las explicaciones de esta semana no pasaron la validación de fidelidad del imitador"
+)
+CURVA_CORTA = "La curva tiene menos de 3 meses de historia"
 
 
 @dataclass(frozen=True)
@@ -63,9 +68,8 @@ def titular_acuerdo(acuerdo: float) -> str:
 
 
 def titular_motor(bloque: str, aporte: float) -> str:
-    return (
-        f"{_capital(bloque_es(bloque))} es el bloque de mayor aporte a la lectura ({aporte:+.2f})"
-    )
+    """The sheet's first driver: the block with the largest absolute contribution."""
+    return f"{_capital(bloque_es(bloque))} es el bloque que más pesa en la lectura ({aporte:+.2f})"
 
 
 def titular_motores_tiempo(bloque: str, inicio: str) -> str:
@@ -73,34 +77,53 @@ def titular_motores_tiempo(bloque: str, inicio: str) -> str:
 
 
 def titular_curva(cambio_2y: float, cambio_10y: float) -> str:
-    diferencia = cambio_2y - cambio_10y
-    if abs(diferencia) < calculos.TOLERANCIA_PARALELO_PB:
+    if calculos.paralelo(cambio_2y, cambio_10y):
         forma = "se movió en paralelo"
     else:
-        forma = "se aplanó" if diferencia > 0 else "se empinó"
+        forma = "se aplanó" if cambio_2y > cambio_10y else "se empinó"
     return (
         f"En 3 meses el 2A {_movimiento(cambio_2y)} y el 10A {_movimiento(cambio_10y)}: "
         f"la curva {forma}"
     )
 
 
-def titular_firma(fase: str, plazo: str, valor_pb: float) -> str:
+def titular_firma(fase: str, plazo: str | None, valor_pb: float | None) -> str:
+    if plazo is None or valor_pb is None:
+        return f"Sin cambios a 1 mes registrados para {fase}"
     return (
         f"En {fase}, el plazo que más se mueve en un mes (mediana) es el {plazo} "
         f"({valor_pb:+.0f} pb)"
     )
 
 
-def titular_episodios(fase: str, cuadrante: Cuadrante, n: int, total: int) -> str:
-    return f"{n} de {total} episodios de {fase} fueron {cuadrante.value}"
+def titular_episodios(fase: str, cuadrante: Cuadrante | None, n: int, total: int) -> str:
+    """`total` counts the CLOSED episodes of the phase; the open one is not history yet."""
+    if total == 0 or cuadrante is None:
+        return f"Es el primer episodio de {fase} en la historia"
+    if total == 1:
+        return f"El único episodio de {fase} ya cerrado fue {cuadrante.value}"
+    return f"{n} de {total} episodios de {fase} ya cerrados fueron {cuadrante.value}"
 
 
-def titular_transicion(
-    fase: str, siguiente: str | None, proporcion: float | None, total: int
-) -> str:
-    if total == 0 or siguiente is None or proporcion is None:
-        return f"No hay episodios de {fase} con sucesor"
-    return f"Tras {fase}, el {proporcion:.0%} de los episodios siguió con {siguiente}"
+def titular_transicion(fase: str, total: int, proporciones: Mapping[str, float | None]) -> str:
+    """Past frequency: of the `total` closed episodes, how many gave way to each phase.
+
+    `proporciones` follows phase order; on a tie every tied phase is named, each with
+    its own count, so no single episode reads as going to two phases.
+    """
+    validas = {nombre: p for nombre, p in proporciones.items() if p is not None}
+    if total == 0 or not validas:
+        return f"No hay episodios de {fase} ya cerrados"
+    maxima = max(validas.values())
+    destinos = [nombre for nombre, p in validas.items() if p == maxima]
+    if total == 1:
+        return f"El único episodio de {fase} ya cerrado dio paso a {destinos[0]}"
+    k = round(maxima * total)
+    cuenta = f"{k} ({maxima:.0%})"
+    verbo = "dio" if k == 1 else "dieron"
+    partes = [f"{cuenta} {verbo} paso a {destinos[0]}", *(f"{cuenta} a {d}" for d in destinos[1:])]
+    lista = partes[0] if len(partes) == 1 else ", ".join(partes[:-1]) + " y " + partes[-1]
+    return f"De {total} episodios de {fase} ya cerrados, {lista}"
 
 
 def titular_macro(etiqueta: str, percentil: float) -> str:
@@ -118,28 +141,40 @@ def titulares(datos: DatosReporte) -> dict[str, Titular]:
 
     posicion = calculos.posicion_duracion(datos.episodios, fase_n, int(lectura["days_in_phase"]))
     coincidencia = calculos.acuerdo(historia, datos.nombres)
-    fila = historia.iloc[-1]
-    motor = max(datos.bloques, key=lambda b: float(fila[b]))
-    dominante, _ = calculos.bloque_dominante(historia, datos.bloques, actual["inicio"])
+    if lectura["drivers_validated"]:
+        primero = lectura["drivers"][0]  # ranked by absolute contribution, as the sheet
+        dominante, _ = calculos.bloque_dominante(historia, datos.bloques, actual["inicio"])
+        texto_motor = titular_motor(str(primero["block"]), float(primero["contribution"]))
+        texto_tiempo = titular_motores_tiempo(dominante, inicio)
+    else:
+        texto_motor = texto_tiempo = NO_VALIDADO
 
     curvas = calculos.curvas_pasadas(datos.curva, datos.fecha)
     if "hace 3m" in curvas.index:
         cambio = (curvas.loc["hoy"] - curvas.loc["hace 3m"]) * 100.0
         curva = titular_curva(float(cambio["DGS2"]), float(cambio["DGS10"]))
     else:
-        curva = "La curva aún no tiene 3 meses de historia"
+        curva = CURVA_CORTA
 
     firma = calculos.firma_por_fase(datos.curva, historia["fase"], datos.nombres).loc[fase]
-    plazo = str(firma.abs().idxmax())
+    firma = firma.dropna()
+    if firma.empty:
+        texto_firma = titular_firma(fase, None, None)
+    else:
+        plazo = str(firma.abs().idxmax())
+        texto_firma = titular_firma(fase, PLAZOS.get(plazo, plazo), float(firma[plazo]))
 
-    cuadrantes = calculos.cuadrantes(datos.episodios)[datos.episodios["fase"] == fase_n]
-    moda = Cuadrante(cuadrantes.mode().iloc[0])
-    total_episodios = int(len(cuadrantes))
-    n_moda = int((cuadrantes == moda).sum())
+    cerrados = datos.episodios.iloc[:-1]  # the last episode is the current, still open
+    suyos = cerrados[cerrados["fase"] == fase_n]
+    if suyos.empty:
+        texto_episodios = titular_episodios(fase, None, 0, 0)
+    else:
+        cuadrantes = calculos.cuadrantes(suyos)
+        moda = Cuadrante(cuadrantes.mode().iloc[0])
+        n_moda = int((cuadrantes == moda).sum())
+        texto_episodios = titular_episodios(fase, moda, n_moda, int(len(cuadrantes)))
 
     salida = transitions(datos.episodios, datos.nombres)[fase_n]
-    validos = {k: v for k, v in salida["a"].items() if v is not None}
-    siguiente = max(validos, key=lambda k: validos[k]) if validos else None
 
     macro = max(datos.hoja["macro"], key=lambda m: abs(float(m["percentil_10a"]) - 0.5))
     texto_macro = titular_macro(str(macro["serie"]), float(macro["percentil_10a"]))
@@ -147,23 +182,15 @@ def titulares(datos: DatosReporte) -> dict[str, Titular]:
 
     return {
         "portada": Titular(
-            titular_portada(fase, posicion),
-            (titular_motor(motor, float(fila[motor])), texto_acuerdo, texto_macro),
+            titular_portada(fase, posicion), (texto_motor, texto_acuerdo, texto_macro)
         ),
         "tasa-10a": Titular(titular_10a(fase, inicio, float(actual["cambio_10y_pb"]))),
         "imitador": Titular(texto_acuerdo),
-        "motores": Titular(titular_motor(motor, float(fila[motor]))),
-        "motores-tiempo": Titular(titular_motores_tiempo(dominante, inicio)),
+        "motores": Titular(texto_motor),
+        "motores-tiempo": Titular(texto_tiempo),
         "curva": Titular(curva),
-        "firma": Titular(titular_firma(fase, PLAZOS.get(plazo, plazo), float(firma[plazo]))),
-        "episodios": Titular(titular_episodios(fase, moda, n_moda, total_episodios)),
-        "transiciones": Titular(
-            titular_transicion(
-                fase,
-                siguiente,
-                None if siguiente is None else validos[siguiente],
-                int(salida["total"]),
-            )
-        ),
+        "firma": Titular(texto_firma),
+        "episodios": Titular(texto_episodios),
+        "transiciones": Titular(titular_transicion(fase, int(salida["total"]), salida["a"])),
         "macro": Titular(texto_macro),
     }

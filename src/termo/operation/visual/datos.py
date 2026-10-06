@@ -99,6 +99,12 @@ def cargar(
             f"la historia termina el {historia.index[-1].date()} y la lectura es del "
             f"{fecha.date()}"
         )
+    episodios = _csv(dir_salida / EPISODIOS, esperada, ["inicio", "fin"])
+    ultima, leida = int(episodios.iloc[-1]["fase"]), int(hoja["reading"]["phase"])
+    if ultima != leida:
+        raise ValueError(
+            f"el ultimo episodio no es la fase de la lectura (episodio {ultima}, lectura {leida})"
+        )
     curva = load_curve(
         dir_snapshot, config.series, config.start, config.holdout_start, final_evaluation=True
     )
@@ -108,7 +114,7 @@ def cargar(
         fecha=fecha,
         hoja=hoja,
         historia=historia,
-        episodios=_csv(dir_salida / EPISODIOS, esperada, ["inicio", "fin"]),
+        episodios=episodios,
         macro=_csv(dir_salida / MACRO, esperada, ["fecha"]).set_index("fecha"),
         curva=curva,
         nombres=tuple(desc.phase_names),

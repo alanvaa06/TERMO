@@ -88,3 +88,15 @@ def test_a_csv_from_another_run_is_refused(tmp_path: Path) -> None:
         _cargar(salida, snapshot)
     message = str(error.value)
     assert message.isascii() and "episodios.csv" in message and "eeeeeeeeeeee" in message
+
+
+def test_an_episode_table_that_does_not_end_in_the_reading_phase_is_refused(
+    tmp_path: Path,
+) -> None:
+    _, salida, snapshot = en_disco(tmp_path)
+    hoja = json.loads((salida / "hoja.json").read_text(encoding="utf-8"))
+    hoja["reading"]["phase"] = 0  # the export's last episode is a 'venta' (2)
+    (salida / "hoja.json").write_text(json.dumps(hoja), encoding="utf-8")
+    with pytest.raises(ValueError, match="el ultimo episodio no es la fase de la lectura") as error:
+        _cargar(salida, snapshot)
+    assert str(error.value).isascii()
