@@ -194,11 +194,13 @@ def _franja(fases: pd.Series, nombres: tuple[str, ...], etiqueta: str) -> go.Hea
 def _sombrear_holdout(fig: go.Figure, historia: pd.DataFrame) -> None:
     dias = historia.index[historia["periodo"] == "holdout"]
     if len(dias):
+        # no label on the band: any data-anchored annotation stretches the "todo"
+        # autorange past the reading date; the page's note under the chart names it
         fig.add_vrect(
             x0=_dias(dias[:1])[0], x1=_dias(dias[-1:])[0], fillcolor=GRIS, opacity=0.10,
-            line_width=0, layer="below", annotation_text="holdout",
-            annotation_position="top left",
+            line_width=0, layer="below",
         )
+
 
 
 def _sombrear_fases(fig: go.Figure, episodios: pd.DataFrame) -> None:

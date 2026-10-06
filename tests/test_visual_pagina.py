@@ -201,3 +201,8 @@ def test_thermometer_positions() -> None:
     assert _izquierda(encima, "hoy") > banda + ancho
     assert _izquierda(encima, "hoy") <= 100.0
     assert "<span>115 días</span>" in encima
+
+
+def test_the_holdout_band_is_named_under_the_ten_year_chart(page: str) -> None:
+    seccion = page[page.index('<section id="tasa-10a"') : page.index('<section id="imitador"')]
+    assert "La banda gris marca el periodo holdout, ya abierto." in seccion

@@ -370,3 +370,13 @@ def test_phase_text_tones_read_on_both_papers() -> None:
     for fase in range(3):
         assert _contraste(g.color_texto_fase(fase), claro) >= 4.5
         assert _contraste(g.color_fase(fase), oscuro) >= 3.0  # dark mode keeps the base hue
+
+
+
+def test_no_annotation_can_stretch_the_all_button_past_the_reading_date(
+    datos: DatosReporte,
+) -> None:
+    """Plotly's autorange makes room for data-anchored annotations, even inside the data."""
+    for fig in (g.fig_10a(datos), g.fig_imitador(datos), g.fig_motores_tiempo(datos),
+                g.fig_macro(datos, datos.series_macro[0])):
+        assert all(a.xref == "paper" for a in fig.layout.annotations)

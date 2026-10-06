@@ -29,6 +29,7 @@ CONFIG_PLOTLY = {"displayModeBar": False, "responsive": True}
 FUENTE = "Fuente: FRED, TERMO."
 FUENTE_MACRO = "Fuente: FRED (Kim-Wright, fed funds efectiva), TERMO."
 LEYENDA_PASADO = "Frecuencias del pasado, no pronóstico. Incluye el periodo holdout, ya abierto."
+NOTA_HOLDOUT = "La banda gris marca el periodo holdout, ya abierto."
 NOTA_MOTORES = (
     "Cada día explica su propia fase (log-odds); cuando cambia la fase, cambia lo que se explica."
 )
@@ -189,7 +190,7 @@ def _secciones(datos: DatosReporte, textos: dict[str, Titular]) -> list[Seccion]
     return [
         Seccion("tasa-10a", "10A por fase", textos["tasa-10a"],
                 (Grafica("Rendimiento del bono a 10 años, coloreado por fase (%)",
-                         g.fig_10a(datos)),)),
+                         g.fig_10a(datos), leyenda=NOTA_HOLDOUT),)),
         Seccion("imitador", "Fase e imitador", textos["imitador"],
                 (Grafica("Fase del modelo, fase del imitador y sus probabilidades",
                          g.fig_imitador(datos)),)),
