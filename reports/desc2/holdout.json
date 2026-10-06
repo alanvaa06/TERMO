@@ -1,0 +1,163 @@
+{
+  "by_phase": [
+    {
+      "days": 19,
+      "direction_share": 0.8947368421052632,
+      "episodes": 1,
+      "evaluable": false,
+      "median_duration_days": 19.0,
+      "name": "rally fuerte",
+      "phase": 0,
+      "recall": 0.5789473684210527
+    },
+    {
+      "days": 198,
+      "direction_share": 0.7070707070707071,
+      "episodes": 1,
+      "evaluable": true,
+      "median_duration_days": 198.0,
+      "name": "rally moderado",
+      "phase": 1,
+      "recall": 0.7222222222222222
+    },
+    {
+      "days": 282,
+      "direction_share": 0.9148936170212766,
+      "episodes": 2,
+      "evaluable": true,
+      "median_duration_days": 141.0,
+      "name": "venta",
+      "phase": 2,
+      "recall": 0.9645390070921985
+    }
+  ],
+  "calibration": {
+    "brier": {
+      "0": 0.02561892382800579,
+      "1": 0.1032247319817543,
+      "2": 0.10318266600370407
+    },
+    "recall_by_phase": {
+      "0": {
+        "days": 19,
+        "recall": 0.5789473684210527
+      },
+      "1": {
+        "days": 198,
+        "recall": 0.7222222222222222
+      },
+      "2": {
+        "days": 282,
+        "recall": 0.9645390070921985
+      }
+    },
+    "reliability": [
+      {
+        "bin": "0.0-0.2",
+        "days": 0,
+        "mean_probability": null,
+        "share_correct": null
+      },
+      {
+        "bin": "0.2-0.4",
+        "days": 0,
+        "mean_probability": null,
+        "share_correct": null
+      },
+      {
+        "bin": "0.4-0.6",
+        "days": 22,
+        "mean_probability": 0.5372684001922607,
+        "share_correct": 0.5
+      },
+      {
+        "bin": "0.6-0.8",
+        "days": 39,
+        "mean_probability": 0.6924737095832825,
+        "share_correct": 0.6153846153846154
+      },
+      {
+        "bin": "0.8-1.0",
+        "days": 438,
+        "mean_probability": 0.9766313433647156,
+        "share_correct": 0.8926940639269406
+      }
+    ]
+  },
+  "checks": [
+    {
+      "name": "D1_persistence",
+      "passed": true,
+      "requirement": ">= 20 days",
+      "value": 141.0
+    },
+    {
+      "name": "D2_sell_coherence",
+      "passed": true,
+      "requirement": ">= 0.6",
+      "value": 0.9148936170212766
+    },
+    {
+      "name": "D3_rally_coherence",
+      "passed": true,
+      "requirement": ">= 0.6",
+      "value": 0.7070707070707071
+    },
+    {
+      "name": "D5_map_stable",
+      "passed": true,
+      "requirement": ">= 0.6",
+      "value": 0.9922742449209605
+    },
+    {
+      "name": "D6_fidelity",
+      "passed": true,
+      "requirement": ">= 0.8",
+      "value": 0.8433806146572104
+    }
+  ],
+  "days": 499,
+  "disclosure": {
+    "n_trials_this_log": 1,
+    "n_trials_total": 64,
+    "prior_logs": [
+      {
+        "n_trials": 29,
+        "path": "trials/trials.jsonl",
+        "verdict": "no-go"
+      },
+      {
+        "n_trials": 33,
+        "path": "trials/exp2/trials.jsonl",
+        "verdict": "no-go"
+      },
+      {
+        "n_trials": 1,
+        "path": "trials/desc/trials.jsonl",
+        "verdict": "no-apto"
+      }
+    ]
+  },
+  "files": {
+    "frozen_labels.csv": "7c8b649bd5068ccb6cfb7204d18d192b2d3f03f23725365aca5817d15e1582da",
+    "labels.csv": "9b25dcb4a55fcaf0429cb60ceae20bb5f138d08f864b396a6db3ff37e7e83c03",
+    "proba.csv": "44112470e112cfa8eb3052093d58515dd5958ec8db07460c0f435a58d027c68c",
+    "shap_blocks.csv": "40eec070bef43a5ba00465f9af4aa1df6c7f56177df0e1f15452c45e339c6d1a",
+    "shap_top.csv": "2ce86e89c65aff08d87b4b0738351586419cce5ac316ae6aeb83563560c3dc45"
+  },
+  "final_trial_id": "desc_k3",
+  "holdout_already_seen": true,
+  "holdout_seen_by": "desc_k3 (trials/desc), opened 2026-10-05, verdict no-apto by D4 only",
+  "limits": [
+    "K, the penalty and the phase names were chosen looking at pre-holdout data.",
+    "D2-D3 are partly true by construction: the phases are built from ranks of these changes.",
+    "The fidelity threshold is a judgement, not a calibrated value.",
+    "SHAP explains the surrogate, not the market and not the jump model.",
+    "Nothing here measures the ability to anticipate; that question is closed with NO-GO.",
+    "Phase names describe direction and intensity only; no claim about the shape of the curve is made or tested.",
+    "The holdout period was already examined by desc_k3 (trials/desc), opened 2026-10-05, verdict no-apto by D4 only: these numbers are not clean evidence; only shadow readings are."
+  ],
+  "pre_holdout_labels_sha256": "1e11cd488e49b40f17281e2a2899307362a985d384dbb685928ea56efac2786e",
+  "stage": "holdout",
+  "verdict": "apto"
+}
