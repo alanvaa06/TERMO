@@ -28,8 +28,8 @@ from termo.core import (
     verify_configuration,
 )
 from termo.data.loader import load_curve
-from termo.data.snapshot import snapshot_hash
-from termo.dataset import ExperimentData, prepare, recipe_for
+from termo.data.snapshot import snapshot_downloaded_at, snapshot_hash
+from termo.dataset import ExperimentData, frozen_cutoff, prepare, recipe_for
 from termo.descriptive.stages import (
     FILES,
     HOLDOUT_DIR,
@@ -51,6 +51,7 @@ from termo.operation.macro import macro_frame, macro_panel
 from termo.operation.sheet_es import write_sheet
 from termo.reading import build_reading
 from termo.validation.trials import TrialLog, TrialLogError
+from termo.validation.walkforward import build_refits
 
 SHADOW_DIR = "sombra"  # trials/<registry>/sombra/sombra.jsonl and trials/<registry>/sombra/<date>/
 SHADOW_LOG_FILE = "sombra.jsonl"
@@ -93,6 +94,18 @@ class ShadowLog:
         found = self.readings()
         return found[-1] if found else None
 
+    def last_reading_before(self, stamp: str) -> dict[str, Any] | None:
+        """The reading of the latest date strictly earlier than `stamp` (ISO dates compare).
+
+        Latest by reading date, not by position in the log: an old week run again after a
+        newer one is appended last but is not the previous week. Among the runs of that
+        date, the last one appended.
+        """
+        found = [r for r in self.readings() if str(r["reading_date"]) < stamp]
+        if not found:
+            return None
+        return sorted(found, key=lambda r: str(r["reading_date"]))[-1]  # stable: ties by position
+
 
 def reading_date(index: pd.DatetimeIndex) -> pd.Timestamp:
     """The last Friday with data on or before the last day of `index`.
@@ -131,11 +144,19 @@ def frozen_as_registered(analysis: Analysis, data: ExperimentData) -> Analysis:
     fitted it once more through the holdout's eve (D5 wants a model that saw everything
     before the holdout). Reproducing the registered files byte for byte takes both; the
     online outputs depend on neither cutoff.
+
+    Only that one refit is built here (the pipeline at the eve, as `prepare` would build
+    it with `frozen_train_end` moved there): preparing the whole curve again would refit
+    every cutoff a second time for one map.
     """
     config = data.config
     start = pd.Timestamp(config.holdout_start)
-    eve = replace(config, frozen_train_end=config.holdout_start - timedelta(days=1))
-    through_eve = frozen_map(prepare(data.curve, eve, data.columns))
+    feature_dates = data.curve.index[config.burn_in_days :]
+    eve = frozen_cutoff(feature_dates, pd.Timestamp(config.holdout_start - timedelta(days=1)))
+    refits = build_refits(
+        data.curve, [eve], data.columns, config.burn_in_days, recipe=recipe_for(config)
+    )
+    through_eve = frozen_map(replace(data, frozen_refits=tuple(refits)))
     before = analysis.frozen_labels.loc[analysis.frozen_labels.index < start]
     return replace(analysis, frozen_labels=pd.concat([before, through_eve.loc[start:]]))
 
@@ -240,6 +261,17 @@ def alert_for(
     return Alert(str(reading["date"]), names[previous_phase], names[phase], confidence)
 
 
+def previous_phase(shadow_log: ShadowLog, stamp: str, holdout_last: int) -> int:
+    """The phase the reading of `stamp` is compared with for the alert.
+
+    The last shadow reading of an earlier date; before any, the last registered holdout
+    day. A run repeated for the same date is never compared with itself: it gives the
+    same record, alert included.
+    """
+    last = shadow_log.last_reading_before(stamp)
+    return holdout_last if last is None else int(last["reading"]["phase"])
+
+
 @dataclass(frozen=True, eq=False)
 class ShadowRun:
     record: dict[str, Any]
@@ -338,8 +370,7 @@ def run_shadow(
         "environment": environment,
     }
     reading = build_reading(analysis, day.date(), config, validation, generated_with)
-    last = shadow_log.last_reading()
-    previous = int(last["reading"]["phase"]) if last is not None else int(hold_labels.iloc[-1])
+    previous = previous_phase(shadow_log, stamp, int(hold_labels.iloc[-1]))
     alert = alert_for(previous, reading, desc.phase_names, op.alert_min_confidence)
     panel = macro_panel(macro_frame(snapshot_dir, config, op), op, day.date())
     contents = analysis_bytes(restrict(analysis, hold_end + ONE_DAY))  # the shadow days only
@@ -347,6 +378,7 @@ def run_shadow(
         "kind": READING,
         "run_at": run_at,
         "snapshot_hash": snapshot_hash(snapshot_dir),
+        "snapshot_downloaded_at": snapshot_downloaded_at(snapshot_dir),
         "reading_date": stamp,
         "reading": reading,
         "files": hashes_of(contents),

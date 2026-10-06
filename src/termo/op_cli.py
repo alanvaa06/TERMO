@@ -145,6 +145,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.download:
         now = _utc_now()
         snapshot_dir = SNAPSHOTS_DIR / now.date().isoformat()
+        if snapshot_dir.exists():  # checked before anything is fetched
+            parser.error(
+                f"{snapshot_dir.as_posix()} exists: use --snapshot {snapshot_dir.as_posix()}"
+            )
         take_operation_snapshot(
             config, op, snapshot_dir, http_get, now.isoformat(timespec="seconds")
         )

@@ -6,6 +6,7 @@ import hashlib
 import json
 from collections.abc import Mapping
 from pathlib import Path
+from typing import Any
 
 MANIFEST = "manifest.json"
 
@@ -18,12 +19,22 @@ def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def _read_manifest(snapshot_dir: Path) -> dict[str, str]:
+def _manifest(snapshot_dir: Path) -> dict[str, Any]:
     path = snapshot_dir / MANIFEST
     if not path.exists():
         raise SnapshotError(f"no manifest in {snapshot_dir}")
-    files: dict[str, str] = json.loads(path.read_text(encoding="utf-8"))["files"]
+    manifest: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
+    return manifest
+
+
+def _read_manifest(snapshot_dir: Path) -> dict[str, str]:
+    files: dict[str, str] = _manifest(snapshot_dir)["files"]
     return files
+
+
+def snapshot_downloaded_at(snapshot_dir: Path) -> str:
+    """When the snapshot was downloaded, as its manifest records it (ISO 8601)."""
+    return str(_manifest(snapshot_dir)["downloaded_at"])
 
 
 def write_snapshot(

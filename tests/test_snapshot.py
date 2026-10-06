@@ -4,7 +4,13 @@ from pathlib import Path
 
 import pytest
 
-from termo.data.snapshot import SnapshotError, read_snapshot, snapshot_hash, write_snapshot
+from termo.data.snapshot import (
+    SnapshotError,
+    read_snapshot,
+    snapshot_downloaded_at,
+    snapshot_hash,
+    write_snapshot,
+)
 
 FILES = {
     "DGS1": "observation_date,DGS1\n1977-02-15,5.39\n",
@@ -47,3 +53,10 @@ def test_hash_depends_on_content_not_on_download_time(tmp_path: Path) -> None:
     write_snapshot(tmp_path / "c", {**FILES, "DGS1": FILES["DGS1"] + "1977-02-16,5.40\n"}, "x")
     assert snapshot_hash(tmp_path / "a") == snapshot_hash(tmp_path / "b")
     assert snapshot_hash(tmp_path / "a") != snapshot_hash(tmp_path / "c")
+
+
+def test_download_time_is_read_from_the_manifest(tmp_path: Path) -> None:
+    write_snapshot(tmp_path / "a", FILES, "2026-10-02T00:00:00+00:00")
+    assert snapshot_downloaded_at(tmp_path / "a") == "2026-10-02T00:00:00+00:00"
+    with pytest.raises(SnapshotError, match="no manifest"):
+        snapshot_downloaded_at(tmp_path / "missing")

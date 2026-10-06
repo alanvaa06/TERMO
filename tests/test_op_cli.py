@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import shutil
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pandas as pd
@@ -29,6 +30,8 @@ MODEL_CONFIG = Path("configs") / "desc2.yaml"
 SNAPSHOT = Path("data") / "snapshots" / "op"
 CSV_FILES = ("lecturas.csv", "historia_diaria.csv", "episodios.csv", "macro.csv", "alertas.csv")
 PREFIXES = ("[ok] ", "[x] ", "[!] ")
+SNAPSHOT_DOWNLOADED_AT = "1999-03-15T00:00:00+00:00"
+TODAY = datetime(1999, 3, 19, 22, 0, tzinfo=UTC)  # what --download would name the snapshot
 
 # The registry fixture's configuration as YAML: desc.yaml's small variant with the desc2
 # names and bookkeeping, without the curve-shape claim. The fixture proves it round-trips.
@@ -75,7 +78,7 @@ def workspace(
     op = load_operation_config(root / OP_CONFIG)
     assert op.registry == REGISTRY and op.model_config == MODEL_CONFIG
     get = fake_fred_frames([curve, make_macro(curve)])
-    take_operation_snapshot(registry.config, op, root / SNAPSHOT, get, "1999-03-15T00:00:00+00:00")
+    take_operation_snapshot(registry.config, op, root / SNAPSHOT, get, SNAPSHOT_DOWNLOADED_AT)
     return root
 
 
@@ -120,7 +123,10 @@ def test_the_four_stages_through_the_command_line(
     _console_ok(capsys.readouterr().out)
     readings = _shadow_log().readings()
     assert len(readings) == 2 and readings[1]["reading_date"] == day
-    assert readings[1]["alert"] is None  # the same phase as the previous shadow reading
+    # the same week again: compared with the reading before that week, so the same alert
+    assert readings[1]["alert"] == readings[0]["alert"]
+    assert readings[1]["snapshot_downloaded_at"] == SNAPSHOT_DOWNLOADED_AT
+    assert f"Snapshot del {SNAPSHOT_DOWNLOADED_AT[:10]}" in sheet.read_text(encoding="utf-8")
     assert model_log.read_bytes() == model_before
 
     # exportar: the five CSV again, one row per reading
@@ -196,6 +202,33 @@ def test_arguments_are_checked_before_anything_runs(
         main(["sombra", "--snap", str(SNAPSHOT)])
     assert (log_path.read_bytes() if log_path.exists() else None) == before
     assert not (Path("data") / "snapshots").joinpath("1999-03-15").exists()
+
+
+def test_download_refuses_when_todays_snapshot_already_exists(
+    here: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A second --download the same day would fail on the existing directory after the
+    download; refused first, with the --snapshot to use instead, and nothing is fetched."""
+    monkeypatch.setattr("termo.op_cli._utc_now", lambda: TODAY)
+
+    def no_network(url: str) -> str:
+        raise AssertionError(f"nothing may be downloaded: {url}")
+
+    monkeypatch.setattr("termo.op_cli.http_get", no_network)
+    log_path = TRIALS_DIR / SHADOW_DIR / SHADOW_LOG_FILE
+    before = log_path.read_bytes() if log_path.exists() else None
+    today_dir = Path("data") / "snapshots" / TODAY.date().isoformat()
+    today_dir.mkdir(parents=True)
+    try:
+        with pytest.raises(SystemExit):
+            main(["sombra", "--download"])
+        error = capsys.readouterr().err
+        assert error.isascii()
+        assert f"{today_dir.as_posix()} exists: use --snapshot {today_dir.as_posix()}" in error
+        assert list(today_dir.iterdir()) == []  # untouched
+    finally:
+        today_dir.rmdir()
+    assert (log_path.read_bytes() if log_path.exists() else None) == before
 
 
 def test_a_registry_name_that_is_not_plain_is_refused(

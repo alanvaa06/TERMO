@@ -186,6 +186,19 @@ def test_full_sheet_sections_in_order(op: OperationConfig) -> None:
     assert "á" in text and "ó" in text
 
 
+def test_snapshot_line_shows_the_download_date_and_falls_back_to_the_run_time(
+    op: OperationConfig,
+) -> None:
+    record = _record("apto")
+    record["snapshot_downloaded_at"] = "2026-10-03T22:15:00+00:00"  # downloaded on Saturday
+    text = render_sheet(record, op)
+    assert "Snapshot del 2026-10-03 (hash 0123456789ab)" in text
+    assert "2026-10-09T21" not in text and "Snapshot del 2026-10-09" not in text
+    # a record written before the key existed: the run time, as before
+    del record["snapshot_downloaded_at"]
+    assert "Snapshot del 2026-10-09 (hash 0123456789ab)" in render_sheet(record, op)
+
+
 def test_apto_record_without_alert_has_no_banner_or_alert(op: OperationConfig) -> None:
     text = render_sheet(_record("apto"), op)
     assert "CAMBIO DE FASE" not in text

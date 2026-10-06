@@ -70,10 +70,12 @@ def render_sheet(record: Mapping[str, Any], op: OperationConfig) -> str:
     reading = record["reading"]
     status = reading["validation"]
     shadow = status["sombra"]
+    # the day the data was downloaded; records older than the key carry the run time only
+    snapshot_at = str(record.get("snapshot_downloaded_at", record["run_at"]))[:10]
     lines = [
         f"# TERMO — hoja semanal del {record['reading_date']}",
         "",
-        f"Snapshot del {str(record['run_at'])[:10]} (hash {str(record['snapshot_hash'])[:12]})",
+        f"Snapshot del {snapshot_at} (hash {str(record['snapshot_hash'])[:12]})",
         "",
     ]
     alert = record["alert"]

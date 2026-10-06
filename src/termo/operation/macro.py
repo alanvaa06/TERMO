@@ -14,6 +14,10 @@ from termo.data.loader import load_curve
 from termo.data.snapshot import read_snapshot
 from termo.operation.config import MacroSeries, OperationConfig
 
+# A term premium or a spread may be negative (Kim-Wright THREEFYTP10 has many negative
+# observations); the curve series keep the yield bounds of the parser.
+MACRO_BOUNDS = (-25.0, 25.0)
+
 
 def _column_name(macro: MacroSeries) -> str:
     if macro.spread_against is None:
@@ -38,7 +42,9 @@ def macro_frame(snapshot_dir: Path, config: CoreConfig, op: OperationConfig) -> 
     texts = read_snapshot(snapshot_dir)
     columns: dict[str, pd.Series] = {}
     for macro in op.macro:
-        series = parse_series_csv(texts[macro.series_id], macro.series_id).reindex(curve.index)
+        series = parse_series_csv(
+            texts[macro.series_id], macro.series_id, bounds=MACRO_BOUNDS
+        ).reindex(curve.index)
         if macro.spread_against is not None:
             series = curve[macro.spread_against] - series
         columns[_column_name(macro)] = series

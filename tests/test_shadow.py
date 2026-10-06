@@ -33,10 +33,12 @@ from termo.operation.shadow import (
     ShadowRun,
     alert_for,
     history_check,
+    previous_phase,
     reading_date,
     run_shadow,
     slice_between,
 )
+from termo.operation.sheet_es import render_sheet
 from termo.operation.snapshot import take_operation_snapshot
 from termo.validation.trials import TrialLog, TrialLogError
 
@@ -45,6 +47,7 @@ COMMIT = "test-commit-4"
 NAMES = ("rally fuerte", "rally moderado", "venta")
 REVISION = 0.05  # one yield moved 5 bp on one past day: a FRED revision
 REVISED_DAYS_BEFORE_HOLDOUT = 300
+SNAPSHOT_DOWNLOADED_AT = "1999-03-15T00:00:00+00:00"
 
 
 def _sha256(path: Path) -> str:
@@ -71,7 +74,7 @@ def _take_op_snapshot(
     target: Path, curve: pd.DataFrame, config: CoreConfig, op: OperationConfig
 ) -> Path:
     get = fake_fred_frames([curve, make_macro(curve)])
-    take_operation_snapshot(config, op, target, get, "1999-03-15T00:00:00+00:00")
+    take_operation_snapshot(config, op, target, get, SNAPSHOT_DOWNLOADED_AT)
     return target
 
 
@@ -200,6 +203,19 @@ def test_alert_rule_by_hand() -> None:
     assert alert_for(None, reading, NAMES, 0.6) is None  # nothing to compare with
 
 
+def test_previous_phase_is_the_last_earlier_week_or_the_last_holdout_day(tmp_path: Path) -> None:
+    log = ShadowLog(tmp_path / "sombra.jsonl")
+    assert previous_phase(log, "2026-10-02", holdout_last=2) == 2  # no shadow reading yet
+    log.append({"kind": "reading", "reading_date": "2026-10-02", "reading": {"phase": 1}})
+    # the same week again: not compared with itself, so the alert of the first run stays
+    assert previous_phase(log, "2026-10-02", holdout_last=2) == 2
+    assert previous_phase(log, "2026-10-09", holdout_last=2) == 1
+    log.append({"kind": "reading", "reading_date": "2026-10-09", "reading": {"phase": 0}})
+    log.append({"kind": "evaluation", "verdict": "apto"})
+    assert previous_phase(log, "2026-10-09", holdout_last=2) == 1
+    assert previous_phase(log, "2026-10-16", holdout_last=2) == 0
+
+
 def test_shadow_log_appends_dated_records_and_finds_the_last_reading(tmp_path: Path) -> None:
     log = ShadowLog(tmp_path / "sombra.jsonl", clock=lambda: "2026-10-09T21:30:00+00:00")
     assert log.records() == [] and log.last_reading() is None
@@ -212,11 +228,19 @@ def test_shadow_log_appends_dated_records_and_finds_the_last_reading(tmp_path: P
     last = log.last_reading()
     assert last is not None and last["reading_date"] == "2026-10-09"
     assert [r["reading_date"] for r in log.readings()] == ["2026-10-02", "2026-10-09"]
+    # the reading before a date: strictly earlier, so a same-week re-run compares with the
+    # previous week, not with itself
+    log.append({"kind": "reading", "reading_date": "2026-10-02", "reading": {"phase": 0}})
+    before = log.last_reading_before("2026-10-09")
+    assert before is not None and before["reading"] == {"phase": 0}  # the latest 10-02 record
+    assert log.last_reading_before("2026-10-02") is None
+    later = log.last_reading_before("2026-10-16")
+    assert later is not None and later["reading_date"] == "2026-10-09"
     with pytest.raises(TrialLogError, match="kind"):
         log.append({"reading_date": "2026-10-16"})
-    assert len(log.records()) == 3
+    assert len(log.records()) == 4
     raw = log.path.read_bytes()
-    assert b"\r\n" not in raw and raw.count(b"\n") == 3
+    assert b"\r\n" not in raw and raw.count(b"\n") == 4
 
 
 def test_history_check_passes_when_the_past_is_reproduced_and_lists_days_when_not(
@@ -296,6 +320,7 @@ def test_shadow_run_logs_reading_hashes_history_check_and_alert(
         "at",
         "run_at",
         "snapshot_hash",
+        "snapshot_downloaded_at",
         "reading_date",
         "reading",
         "files",
@@ -306,6 +331,8 @@ def test_shadow_run_logs_reading_hashes_history_check_and_alert(
         "environment",
     }
     assert record["snapshot_hash"] == snapshot_hash(op_snapshot)
+    assert record["snapshot_downloaded_at"] == SNAPSHOT_DOWNLOADED_AT  # the manifest's, not run_at
+    assert record["run_at"] != SNAPSHOT_DOWNLOADED_AT
     assert record["code_commit"] == COMMIT and "xgboost" in record["environment"]
 
     # the reading is the last Friday of the snapshot, built on the whole recomputed history
@@ -373,6 +400,9 @@ def test_shadow_run_logs_reading_hashes_history_check_and_alert(
     assert run.sheet_path == registry.reports_dir / SHADOW_DIR / f"{record['reading_date']}.md"
     sheet = run.sheet_path.read_text(encoding="utf-8")
     assert f"hoja semanal del {record['reading_date']}" in sheet
+    assert (
+        f"Snapshot del {SNAPSHOT_DOWNLOADED_AT[:10]} (hash {record['snapshot_hash'][:12]})" in sheet
+    )
     assert "HISTORIA REVISADA" not in sheet
     assert f"**{reading['phase_name']}** desde {reading['episode_start']}" in sheet
     payload = json.loads(run.sheet_path.with_suffix(".json").read_text(encoding="utf-8"))
@@ -390,7 +420,10 @@ def test_shadow_run_logs_reading_hashes_history_check_and_alert(
 
 
 def test_a_repeated_run_appends_an_identical_reading_without_overwriting(
-    first: tuple[ShadowRun, list[str]], second: ShadowRun, registry: Desc2Registry
+    first: tuple[ShadowRun, list[str]],
+    second: ShadowRun,
+    registry: Desc2Registry,
+    op: OperationConfig,
 ) -> None:
     run, _ = first
     records = _shadow_log(registry).records()
@@ -400,8 +433,15 @@ def test_a_repeated_run_appends_an_identical_reading_without_overwriting(
     assert second.record["reading"] == run.record["reading"]
     assert second.record["files"] == run.record["files"]
     assert second.record["reading_date"] == run.record["reading_date"]
-    # the previous reading is now the first shadow one: the same phase, so no alert
-    assert second.record["alert"] is None
+    # the previous phase comes from the reading of an EARLIER date (here: the last holdout
+    # day), never from the same week's run: the repeat reproduces the record and its alert
+    assert second.record["alert"] == run.record["alert"]
+    assert {k: v for k, v in second.record.items() if k != "run_at"} == {
+        k: v for k, v in run.record.items() if k != "run_at"
+    }
+    # and the same sheet: the run time is not on it, the snapshot's download date is
+    assert second.sheet_path == run.sheet_path
+    assert second.sheet_path.read_text(encoding="utf-8") == render_sheet(run.record, op)
     # the model trial log is read, never written
     assert all(r["kind"] != "reading" for r in registry.log.records())
 

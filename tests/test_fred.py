@@ -56,3 +56,19 @@ def test_parse_accepts_dot_as_missing() -> None:
 def test_parse_rejects_malformed_files(text: str, message: str) -> None:
     with pytest.raises(DataValidationError, match=message):
         parse_series_csv(text, "DGS1")
+
+
+NEGATIVE = "observation_date,THREEFYTP10\n2020-03-09,-0.9876\n2020-03-10,0.0123\n"
+
+
+def test_bounds_default_to_yields_and_a_macro_series_may_be_negative() -> None:
+    # a Treasury yield is never negative: the default bounds refuse the row
+    with pytest.raises(DataValidationError, match="outside"):
+        parse_series_csv(NEGATIVE, "THREEFYTP10")
+    # a term premium is: wider bounds accept it
+    series = parse_series_csv(NEGATIVE, "THREEFYTP10", bounds=(-25.0, 25.0))
+    assert series.iloc[0] == pytest.approx(-0.9876)
+    assert series.iloc[1] == pytest.approx(0.0123)
+    # the wider bounds still have a floor and a ceiling
+    with pytest.raises(DataValidationError, match=r"outside \[-25.0, 25.0\]"):
+        parse_series_csv(NEGATIVE.replace("-0.9876", "-30"), "THREEFYTP10", bounds=(-25.0, 25.0))

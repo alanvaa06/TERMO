@@ -12,6 +12,7 @@ from termo.data.fred import fetch_series_csv, parse_series_csv
 from termo.data.loader import check_coverage, complete_days
 from termo.data.snapshot import write_snapshot
 from termo.operation.config import OperationConfig
+from termo.operation.macro import MACRO_BOUNDS
 
 
 def take_operation_snapshot(
@@ -23,8 +24,9 @@ def take_operation_snapshot(
 ) -> None:
     """Download curve and macro series; nothing is written unless the curve passes coverage.
 
-    Macro series are parsed to prove they are valid FRED CSV, but a hole in them is not
-    refused: the panel notes the last available value instead.
+    Macro series are parsed to prove they are valid FRED CSV (within the macro bounds: a
+    term premium may be negative), but a hole in them is not refused: the panel notes the
+    last available value instead.
     """
     texts: dict[str, str] = {}
     parsed: list[pd.Series] = []
@@ -35,6 +37,6 @@ def take_operation_snapshot(
     check_coverage(complete_days(parsed, config.start), config.start)
     for macro in op.macro:
         text = fetch_series_csv(macro.series_id, get)
-        parse_series_csv(text, macro.series_id)
+        parse_series_csv(text, macro.series_id, bounds=MACRO_BOUNDS)
         texts[macro.series_id] = text
     write_snapshot(snapshot_dir, texts, downloaded_at)

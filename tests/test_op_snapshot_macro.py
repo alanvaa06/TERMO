@@ -10,6 +10,7 @@ import pytest
 
 from conftest import fake_fred_frames, make_macro
 from termo.config import CoreConfig
+from termo.data.fred import DataValidationError
 from termo.data.snapshot import read_snapshot, snapshot_hash
 from termo.operation.config import load_operation_config
 from termo.operation.macro import macro_frame, macro_panel
@@ -43,8 +44,6 @@ def test_snapshot_holds_curve_and_macro_series(op_snapshot: Path, desc2_config: 
 def test_a_hole_in_the_curve_refuses_the_snapshot_but_a_hole_in_macro_does_not(
     tmp_path: Path, curve: pd.DataFrame, desc2_config: CoreConfig
 ) -> None:
-    from termo.data.fred import DataValidationError
-
     op = load_operation_config(REPO_OP)
     holed = curve.copy()
     holed.iloc[500:560, 3] = np.nan
@@ -59,6 +58,31 @@ def test_a_hole_in_the_curve_refuses_the_snapshot_but_a_hole_in_macro_does_not(
         desc2_config, op, tmp_path / "b", fake_fred_frames([curve, macro]), "now"
     )
     assert (tmp_path / "b" / "THREEFYTP10.csv").exists()
+
+
+def test_a_negative_term_premium_is_accepted_by_the_snapshot_and_read_back(
+    tmp_path: Path, curve: pd.DataFrame, desc2_config: CoreConfig
+) -> None:
+    """The Kim-Wright premium has many negative observations; a yield never has."""
+    op = load_operation_config(REPO_OP)
+    macro = make_macro(curve)
+    macro["THREEFYTP10"] = macro["THREEFYTP10"] - macro["THREEFYTP10"].median()  # both signs
+    assert (macro["THREEFYTP10"] < 0).any() and (macro["THREEFYTP10"] > 0).any()
+    take_operation_snapshot(
+        desc2_config, op, tmp_path / "neg", fake_fred_frames([curve, macro]), "now"
+    )
+    frame = macro_frame(tmp_path / "neg", desc2_config, op)
+    day = curve.index[int(macro["THREEFYTP10"].to_numpy().argmin())]
+    assert frame.loc[day, "THREEFYTP10"] < 0
+    assert frame.loc[day, "THREEFYTP10"] == pytest.approx(macro.loc[day, "THREEFYTP10"], abs=1e-4)
+    # a negative yield in the curve is still refused
+    negative_curve = curve.copy()
+    negative_curve.iloc[700, 0] = -0.01
+    with pytest.raises(DataValidationError, match="outside"):
+        take_operation_snapshot(
+            desc2_config, op, tmp_path / "bad", fake_fred_frames([negative_curve, macro]), "now"
+        )
+    assert not (tmp_path / "bad").exists()
 
 
 def test_macro_frame_is_on_the_curve_calendar_with_the_spread(
