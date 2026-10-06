@@ -108,7 +108,7 @@ def test_agreement_driver_and_dominant_block() -> None:
         "Movimiento tramo largo (10A-30A) es el bloque que más pesa en la lectura (-1.17)"
     )
     assert titular_motores_tiempo("pendientes", "2025-12-18", -0.4237) == (
-        "Desde el 2025-12-18, el bloque con mayor peso promedio es pendientes (-0.42)"
+        "Desde el 2025-12-18, pendientes es el bloque con mayor peso, -0.42 de promedio"
     )
 
 

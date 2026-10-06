@@ -88,8 +88,8 @@ def titular_motor(bloque: str, aporte: float) -> str:
 def titular_motores_tiempo(bloque: str, inicio: str, media: float) -> str:
     """`media` is the block's signed mean contribution since `inicio`."""
     return (
-        f"Desde el {inicio}, el bloque con mayor peso promedio es {bloque_es(bloque)} "
-        f"({media:+.2f})"
+        f"Desde el {inicio}, {bloque_es(bloque)} es el bloque con mayor peso, "
+        f"{media:+.2f} de promedio"
     )
 
 
