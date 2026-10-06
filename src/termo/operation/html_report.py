@@ -1,9 +1,9 @@
-"""The weekly deliverable as one HTML page (no network, no scripts).
+"""A small Markdown subset as HTML, and the UTF-8 writer of the report.
 
-The sheet and the monthly report are written in a small Markdown subset: `#`/`##`
-headings, `**bold**`, pipe tables with a `|---|` separator row, `- ` bullets and blank-line
-separated paragraphs. That subset, and only that, is converted here; any other line is a
-paragraph. Text is escaped, so a `<` in a cell stays a `<`; accents and the `→` are kept.
+Used for the analyst's comment in the visual report. The subset: `#`/`##` headings,
+`**bold**`, pipe tables with a `|---|` separator row, `- ` bullets and blank-line
+separated paragraphs; any other line is a paragraph. Text is escaped, so a `<` in a
+cell stays a `<`; accents and the `→` are kept.
 """
 
 from __future__ import annotations
@@ -15,24 +15,6 @@ from pathlib import Path
 
 BOLD = re.compile(r"\*\*(.+?)\*\*")
 TABLE_SEPARATOR = re.compile(r"^\|(?:\s*:?-+:?\s*\|)+$")
-
-STYLE = """
-body { font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; color: #1f2933;
-  background: #ffffff; margin: 0; padding: 2rem 1rem; line-height: 1.5; }
-main { max-width: 900px; margin: 0 auto; }
-h1 { font-size: 1.6rem; margin: 0 0 1rem; }
-section { margin: 2.5rem 0; padding-top: 1rem; border-top: 2px solid #d9dee3; }
-section > h2.titulo { font-size: 1.3rem; color: #52606d; margin: 0 0 1rem; }
-section h1 { font-size: 1.4rem; margin: 1rem 0; }
-section h2 { font-size: 1.15rem; margin: 1.5rem 0 0.5rem; }
-p { margin: 0.5rem 0; }
-ul { margin: 0.5rem 0; padding-left: 1.5rem; }
-table { border-collapse: collapse; margin: 0.75rem 0; width: 100%; font-size: 0.95rem; }
-th, td { border: 1px solid #d9dee3; padding: 0.35rem 0.6rem; text-align: left; }
-th { background: #e4e7eb; }
-tbody tr:nth-child(even) { background: #f5f7fa; }
-footer { margin-top: 3rem; color: #7b8794; font-size: 0.85rem; }
-"""
 
 
 def _inline(text: str) -> str:
@@ -90,38 +72,6 @@ def md_to_html(text: str) -> str:
             blocks.append(f"<p>{_inline(stripped)}</p>")
             i += 1
     return "\n".join(blocks)
-
-
-def render_html(sections: Sequence[tuple[str, str]], title: str, generated_at: str) -> str:
-    """A self-contained HTML5 page in Spanish: one <section> per (heading, Markdown) pair."""
-    parts = [
-        "<!doctype html>",
-        '<html lang="es">',
-        "<head>",
-        '<meta charset="utf-8">',
-        '<meta name="viewport" content="width=device-width, initial-scale=1">',
-        f"<title>{html.escape(title)}</title>",
-        f"<style>{STYLE}</style>",
-        "</head>",
-        "<body>",
-        "<main>",
-        f"<h1>{html.escape(title)}</h1>",
-    ]
-    for heading, markdown in sections:
-        parts += [
-            "<section>",
-            f'<h2 class="titulo">{html.escape(heading)}</h2>',
-            md_to_html(markdown),
-            "</section>",
-        ]
-    parts += [
-        f"<footer>Generado el {html.escape(generated_at)}.</footer>",
-        "</main>",
-        "</body>",
-        "</html>",
-        "",
-    ]
-    return "\n".join(parts)
 
 
 def write_html(html_text: str, path: Path) -> Path:

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import html
 import json
+import re
+import shutil
 from pathlib import Path
 
 import pandas as pd
@@ -24,6 +26,9 @@ from test_op_cli import (
     _shadow_log,
     make_workspace,
 )
+from visual_fixture import PLOTLY_INICIO, sin_plotlyjs
+
+RECURSO_EXTERNO = re.compile(r"""(?:src|href)\s*=\s*["']?https?:""", re.IGNORECASE)
 
 
 @pytest.fixture(scope="module")
@@ -74,15 +79,14 @@ def test_the_week_in_one_command_with_the_monthly_report(
     assert b"\r\n" not in raw
     assert page.lower().startswith("<!doctype html>")
     assert '<meta charset="utf-8">' in page
-    assert "Hoja semanal" in page and "Fase actual" in page
-    assert f"Ficha mensual {month}" in page and "Duraciones históricas" in page
-    assert "<table>" in page and "<ul>" in page
+    assert '<section id="portada"' in page and '<section id="validacion"' in page
     assert record["reading"]["phase_name"] in page
+    assert page.count(PLOTLY_INICIO) == 1
     sheet_json = json.loads((out / "hoja.json").read_text(encoding="utf-8"))
     assert sheet_json["reading_date"] == day
     descargo = load_operation_config(Path("configs") / "operacion.yaml").texts["descargo"]
     assert not descargo.isascii() and html.escape(descargo) in page
-    assert "http" not in page.lower() and "<script" not in page.lower()
+    assert not RECURSO_EXTERNO.search(sin_plotlyjs(page))
 
     # byte-for-byte copies of the sheet, the ficha and the five CSV
     sheet = REPORTS_DIR / SHADOW_DIR / f"{day}.md"
@@ -134,3 +138,47 @@ def test_help_says_to_run_from_the_repository_root(capsys: pytest.CaptureFixture
     out = capsys.readouterr().out
     assert out.isascii() and "repository root" in out
     assert "--download" in out and "--snapshot" in out and "--mes" in out
+    assert "--solo-reporte" in out
+
+
+def test_the_report_alone_is_rebuilt_from_the_files(
+    here: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert main(["--snapshot", str(SNAPSHOT)]) == 0
+    capsys.readouterr()
+    day = str(_shadow_log().readings()[-1]["reading_date"])
+    out = Path("output") / day
+    log_before = _shadow_log().path.read_bytes()
+    (out / REPORT_FILE).unlink()
+    (out / "comentario.md").write_text("## Lectura\n\nNota del analista.", encoding="utf-8")
+
+    assert main(["--solo-reporte", str(out), "--snapshot", str(SNAPSHOT)]) == 0
+    lines = _console_ok(capsys.readouterr().out)
+    assert lines == [f"[ok] reporte -> {out.as_posix()}/{REPORT_FILE}"]
+    page = (out / REPORT_FILE).read_text(encoding="utf-8")
+    assert '<section id="comentario"' in page and "Nota del analista." in page
+    assert _shadow_log().path.read_bytes() == log_before  # no model run, no new reading
+
+
+def test_the_report_alone_refuses_download_mes_and_a_foreign_snapshot(
+    here: Path, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    assert main(["--snapshot", str(SNAPSHOT)]) == 0
+    capsys.readouterr()
+    out = Path("output") / str(_shadow_log().readings()[-1]["reading_date"])
+    with pytest.raises(SystemExit):
+        main(["--solo-reporte", str(out), "--download"])
+    assert "--solo-reporte" in capsys.readouterr().err
+    with pytest.raises(SystemExit):
+        main(["--solo-reporte", str(out), "--snapshot", str(SNAPSHOT), "--mes", "1999-03"])
+    assert "--solo-reporte" in capsys.readouterr().err
+
+    foreign = tmp_path / "otra-semana"
+    shutil.copytree(out, foreign)
+    sheet = json.loads((foreign / "hoja.json").read_text(encoding="utf-8"))
+    sheet["snapshot_hash"] = "f" * 64
+    (foreign / "hoja.json").write_text(json.dumps(sheet), encoding="utf-8")
+    with pytest.raises(SystemExit):
+        main(["--solo-reporte", str(foreign), "--snapshot", str(SNAPSHOT)])
+    error = capsys.readouterr().err
+    assert "snapshot" in error and error.isascii()
