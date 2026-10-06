@@ -15,7 +15,7 @@ REPO_OP = Path(__file__).resolve().parents[1] / "configs" / "operacion.yaml"
 def test_loads_the_repository_operation_configuration() -> None:
     op = load_operation_config(REPO_OP)
     assert [m.series_id for m in op.macro] == ["THREEFYTP10", "DFF"]
-    assert op.macro[0].name == "prima por plazo 10 anos (Kim-Wright)"
+    assert op.macro[0].name == "prima por plazo 10 años (Kim-Wright)"
     assert op.macro[1].spread_against == "DGS2"  # the proxy is DGS2 - DFF
     assert op.macro[0].spread_against is None
     assert op.alert_min_confidence == 0.6

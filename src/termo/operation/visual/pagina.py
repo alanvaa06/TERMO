@@ -335,9 +335,6 @@ def _seccion(seccion: Seccion, primero: int) -> tuple[str, int]:
 
 def _validacion(datos: DatosReporte, titular: Titular) -> str:
     validacion = datos.lectura["validation"]
-    veredictos = " · ".join(
-        f"{v['stage']}: {str(v['verdict']).upper()}" for v in validacion["registered_verdicts"]
-    )
     sombra = validacion["sombra"]
     faltan = int(sombra["proxima_evaluacion_semanas"])
     if faltan == 0:
@@ -345,7 +342,6 @@ def _validacion(datos: DatosReporte, titular: Titular) -> str:
     else:
         proxima = f"en {faltan} {'semana' if faltan == 1 else 'semanas'}"
     tarjetas = (
-        ("Veredictos registrados", veredictos),
         ("Semanas de sombra", f"{int(sombra['semanas'])}"),
         ("Próxima evaluación de sombra", proxima),
     )

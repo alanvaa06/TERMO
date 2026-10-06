@@ -10,5 +10,4 @@
 - pending: el reporte no da la separacion de la inercia en 1998-2024 por separado (solo sobre el periodo del JM); la compuerta de la familia congelada si usa sus propias semanas.
 - pending: merge de feat/reporte-visual a main (spec 5 implementado).
 - pending: historia_diaria.csv (~2.3 MB) se repite completo cada semana en git; decidir si se versiona solo el delta o se deja fuera.
-- pending: etiqueta macro 'prima por plazo 10 anos' en configs/operacion.yaml sin ene (se ve en el reporte); corregir a 'años' si nada la imprime en consola.
 - pending: revisar nombres de fase contra episodios: en 54 'venta' cerradas desde 1988 el 10A subio solo en 35% (mediana -8.5 pb); hipotesis: la fase se reconoce con cambios pasados y luego revierte.

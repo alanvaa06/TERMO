@@ -242,14 +242,16 @@ def test_cover_notices(datos: DatosReporte) -> None:
 
 
 def test_validation_escapes_at_the_sink(datos: DatosReporte) -> None:
-    validacion = {
-        **datos.lectura["validation"],
-        "registered_verdicts": [{"stage": "<x>", "verdict": "apto & listo"}],
+    validacion = datos.lectura["validation"]
+    por_fase = [{**validacion["by_phase"][0], "name": "<x> & y"}, *validacion["by_phase"][1:]]
+    veredictos = [{"stage": "diagnostic", "verdict": "<apto>"}]
+    lectura = {
+        **datos.lectura,
+        "validation": {**validacion, "by_phase": por_fase, "registered_verdicts": veredictos},
     }
-    lectura = {**datos.lectura, "validation": validacion}
     page = render(replace(datos, hoja={**datos.hoja, "reading": lectura}), GENERADO)
     caja = _seccion(page, "validacion")
-    assert "&lt;x&gt;: APTO &amp; LISTO" in caja and "<x>" not in caja
+    assert "&lt;x&gt; &amp; y" in caja and "&lt;APTO&gt;" in caja and "<x>" not in caja
 
 
 def test_missing_statistics_show_as_a_dash() -> None:
@@ -293,3 +295,8 @@ def test_thermometer_positions() -> None:
 def test_the_holdout_band_is_named_under_the_ten_year_chart(page: str) -> None:
     seccion = page[page.index('<section id="tasa-10a"') : page.index('<section id="imitador"')]
     assert "La banda gris marca el periodo holdout, ya abierto." in seccion
+
+
+def test_verdicts_live_in_the_headline_only(page: str) -> None:
+    validacion = _seccion(page, "validacion")
+    assert "Veredictos registrados" not in validacion and "diagnostic:" not in validacion
