@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import itertools
 import math
 import re
 from collections.abc import Callable, Iterable, Iterator
@@ -265,3 +266,107 @@ def test_no_figure_shows_a_day_after_the_reading(datos: DatosReporte) -> None:
         fechas = [f for traza in fig.data for f in _fechas(traza.x)]
         fechas += [f for forma in fig.layout.shapes for f in _fechas([forma.x0, forma.x1])]
         assert all(f <= datos.fecha for f in fechas), nombre
+
+
+# --- the y axis follows the visible x window (the range selector opens on 3 or 10 years)
+
+
+def _dentro(rango: Iterable[float], bajo: float, alto: float, holgura: float = 0.10) -> bool:
+    """The axis range covers [bajo, alto] with at most `holgura` of the span on each side."""
+    y0, y1 = rango
+    margen = holgura * (alto - bajo) + 1e-3
+    return bajo - margen <= y0 <= bajo + 1e-3 and alto - 1e-3 <= y1 <= alto + margen
+
+
+def test_ten_year_y_axis_fits_the_initial_window(datos: DatosReporte) -> None:
+    fig = g.fig_10a(datos)
+    desde, hasta = fig.layout.xaxis.range
+    tasa = datos.curva["DGS10"].reindex(datos.historia.index).loc[desde:hasta]
+    assert _dentro(fig.layout.yaxis.range, float(tasa.min()), float(tasa.max()))
+    assert fig.layout.meta["ajustar_y"]  # the page script refits it when x changes
+    # a narrower window gets a narrower axis, not the full history's
+    g._selector_rango(fig, datos.fecha, anios=1)
+    desde = fig.layout.xaxis.range[0]
+    anio = tasa.loc[desde:]
+    assert _dentro(fig.layout.yaxis.range, float(anio.min()), float(anio.max()))
+
+
+def test_drivers_over_time_y_axis_fits_the_stacked_totals(datos: DatosReporte) -> None:
+    fig = g.fig_motores_tiempo(datos)
+    desde, hasta = fig.layout.xaxis.range
+    semanal = datos.historia.loc[_semanas(datos), list(BLOQUES)].loc[desde:hasta].fillna(0.0)
+    arriba = float(semanal.clip(lower=0.0).sum(axis=1).max())
+    abajo = float(semanal.clip(upper=0.0).sum(axis=1).min())
+    assert _dentro(fig.layout.yaxis.range, min(abajo, 0.0), max(arriba, 0.0))
+    assert fig.layout.meta["ajustar_y"]
+
+
+def test_macro_y_axis_fits_the_series_and_its_band(datos: DatosReporte) -> None:
+    for serie in datos.series_macro:
+        fig = g.fig_macro(datos, serie)
+        desde, hasta = fig.layout.xaxis.range
+        valores = [
+            float(y) for traza in fig.data for x, y in zip(traza.x, traza.y, strict=True)
+            if desde <= x <= hasta and not math.isnan(y)
+        ]
+        assert _dentro(fig.layout.yaxis.range, min(valores), max(valores))
+        assert fig.layout.meta["ajustar_y"]
+
+
+def test_surrogate_probabilities_stay_on_zero_one(datos: DatosReporte) -> None:
+    fig = g.fig_imitador(datos)
+    assert list(fig.layout.yaxis3.range) == [0, 1]
+    assert fig.layout.legend.traceorder == "normal"  # phases listed in phase order
+
+
+def _con_selector(datos: DatosReporte) -> Iterator[tuple[str, go.Figure]]:
+    yield "fig_10a", g.fig_10a(datos)
+    yield "fig_imitador", g.fig_imitador(datos)
+    yield "fig_motores_tiempo", g.fig_motores_tiempo(datos)
+    for serie in datos.series_macro:
+        yield f"fig_macro {serie.columna}", g.fig_macro(datos, serie)
+
+
+def test_range_selector_is_neutral_and_clear_of_the_legend(datos: DatosReporte) -> None:
+    for nombre, fig in _con_selector(datos):
+        selector = fig.layout.xaxis.rangeselector
+        assert selector.bgcolor == "rgba(137,135,129,0.15)", nombre
+        assert selector.activecolor == "rgba(137,135,129,0.45)", nombre
+        assert selector.font.color is None, nombre  # it follows the page font in dark mode
+        assert (selector.x, selector.xanchor) == (1, "right"), nombre
+        leyenda = fig.layout.legend
+        assert leyenda.x in (0, None) and leyenda.xanchor in ("left", None), nombre
+        # its own row, above the legend's, inside the top margin
+        assert selector.yanchor == "bottom" and selector.y > (leyenda.y or 1.02), nombre
+        assert fig.layout.margin.t >= 72, nombre
+
+
+def test_bar_labels_are_not_clipped(datos: DatosReporte) -> None:
+    fig = g.fig_motores_hoy(datos)
+    (cascada,) = fig.data
+    assert cascada.cliponaxis is False
+    puntos = [0.0, *itertools.accumulate(cascada.x[:-1])]
+    x0, x1 = fig.layout.xaxis.range
+    margen = 0.1 * (max(puntos) - min(puntos))
+    assert x0 <= min(puntos) - margen and x1 >= max(puntos) + margen
+    fig = g.fig_variables_hoy(datos)
+    (barras,) = fig.data
+    assert barras.cliponaxis is False
+    x0, x1 = fig.layout.xaxis.range
+    bajo, alto = min(0.0, *barras.x), max(0.0, *barras.x)
+    margen = 0.1 * (alto - bajo)
+    assert x0 <= bajo - margen and x1 >= alto + margen
+
+
+def test_transition_labels_have_room(datos: DatosReporte) -> None:
+    fig = g.fig_transiciones(datos)
+    assert fig.layout.yaxis.automargin is True  # 'rally fuerte' not cut on the left
+    assert fig.layout.xaxis.automargin is True
+    assert fig.layout.xaxis.title.standoff and fig.layout.xaxis.title.standoff >= 8
+
+
+def test_phase_text_tones_read_on_both_papers() -> None:
+    claro, oscuro = PAPELES
+    for fase in range(3):
+        assert _contraste(g.color_texto_fase(fase), claro) >= 4.5
+        assert _contraste(g.color_fase(fase), oscuro) >= 3.0  # dark mode keeps the base hue

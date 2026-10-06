@@ -19,6 +19,10 @@ from termo.operation.visual.datos import DatosReporte, SerieMacro
 from termo.operation.visual.etiquetas import bloque_es, variable_es
 
 COLORES_FASE = ("#2a78d6", "#1baf7a", "#e34948")
+# The same hues darkened until text reaches WCAG 4.5:1 on the light page (#fbfaf7):
+# 4.55, 4.54, 4.55 (the base hues give 4.23, 2.70, 3.79). On the dark page the base hues
+# already clear 3:1 for large text (4.10, 6.43, 4.58), so dark mode keeps them.
+COLORES_TEXTO_FASE = ("#2873cd", "#14835b", "#cc4241")
 COLORES_BLOQUE = ("#6250d6", "#eb6834", "#eda100", "#e87ba4", "#008300", "#888780")
 # Marks and reference lines keep a fixed colour in both modes, so they are mid-tones that
 # clear WCAG 3:1 on the light (#fbfaf7) and the dark (#161615) page alike.
@@ -37,6 +41,10 @@ PLAZOS = {"DGS1": "1A", "DGS2": "2A", "DGS3": "3A", "DGS5": "5A", "DGS7": "7A",
           "DGS10": "10A", "DGS30": "30A"}
 ALTO = 380
 TRANSPARENTE = "rgba(0,0,0,0)"
+MARGEN_SELECTOR = 84  # top margin of a chart with a range selector: legend row + button row
+FILA_LEYENDA = 24  # px of one row of a horizontal legend
+HOLGURA_Y = 0.05  # padding of a fitted y axis, as a share of the visible span
+HOLGURA_TEXTO = 0.18  # x padding for the labels outside the bars, as a share of the span
 
 TEMA = go.layout.Template(
     layout=go.Layout(
@@ -55,6 +63,11 @@ TEMA = go.layout.Template(
 
 def color_fase(fase: int) -> str:
     return COLORES_FASE[fase % len(COLORES_FASE)]
+
+
+def color_texto_fase(fase: int) -> str:
+    """The phase hue for text on the light page (>= 4.5:1)."""
+    return COLORES_TEXTO_FASE[fase % len(COLORES_TEXTO_FASE)]
 
 
 def _color_bloque(posicion: int) -> str:
@@ -84,17 +97,76 @@ def _semanal(historia: pd.DataFrame) -> pd.DataFrame:
     return historia[ultimo]
 
 
-def _selector_rango(fig: go.Figure, fecha: pd.Timestamp, anios: int = 3) -> None:
+def _extremos(fig: go.Figure, desde: str, hasta: str) -> tuple[float, float] | None:
+    """Lowest and highest point drawn between two ISO dates; stacked areas count by total.
+
+    The page script (pagina.SCRIPT_PAGINA, ajustarY) does the same in the browser when the
+    x range moves.
+    """
+    sueltos: list[float] = []
+    pilas: dict[tuple[str, str], float] = {}
+    for traza in fig.data:
+        if not isinstance(traza, go.Scatter) or traza.x is None or traza.y is None:
+            continue
+        for x, y in zip(traza.x, traza.y, strict=True):
+            dia = str(x)[:10]
+            if y is None or math.isnan(y) or not desde <= dia <= hasta:
+                continue
+            if traza.stackgroup:
+                clave = (str(traza.stackgroup), dia)
+                pilas[clave] = pilas.get(clave, 0.0) + float(y)
+            else:
+                sueltos.append(float(y))
+    valores = sueltos + list(pilas.values()) + ([0.0] if pilas else [])
+    if not valores:
+        return None
+    return min(valores), max(valores)
+
+
+def _con_holgura(bajo: float, alto: float, holgura: float) -> list[float]:
+    margen = holgura * (alto - bajo) or holgura * abs(alto) or 1.0
+    return [bajo - margen, alto + margen]
+
+
+def _selector_rango(
+    fig: go.Figure,
+    fecha: pd.Timestamp,
+    anios: int = 3,
+    ajustar_y: bool = True,
+    filas_leyenda: int = 1,
+) -> None:
+    """Range buttons top right, above the legend's rows; the x axis opens on `anios` years.
+
+    `filas_leyenda` reserves room for a legend that wraps (six blocks do on a laptop).
+
+    With `ajustar_y` the main y axis is fitted to the data inside that window, and the
+    figure is marked (layout.meta) so the page script refits it when the x range changes.
+    """
     botones = [
         {"count": n, "label": f"{n}A", "step": "year", "stepmode": "backward"}
         for n in (1, 3, 5, 10)
     ]
     botones.append({"step": "all", "label": "todo"})
-    fig.update_layout(xaxis_rangeselector={"buttons": botones, "x": 0, "y": 1.12})
-    fig.update_xaxes(
-        range=[(fecha - pd.DateOffset(years=anios)).strftime("%Y-%m-%d"),
-               fecha.strftime("%Y-%m-%d")]
+    extra = FILA_LEYENDA * (filas_leyenda - 1)
+    arriba = MARGEN_SELECTOR + extra
+    alto_util = (fig.layout.height or ALTO) - arriba - (fig.layout.margin.b or 40)
+    fig.update_layout(
+        margin_t=arriba,
+        legend={"x": 0, "xanchor": "left", "y": 1.02, "yanchor": "bottom"},
+        xaxis_rangeselector={
+            "buttons": botones, "x": 1, "xanchor": "right", "yanchor": "bottom",
+            "y": 1 + (38 + extra) / alto_util,  # px above the plot: clear of the legend
+            "bgcolor": "rgba(137,135,129,0.15)", "activecolor": "rgba(137,135,129,0.45)",
+        },
     )
+    desde = (fecha - pd.DateOffset(years=anios)).strftime("%Y-%m-%d")
+    hasta = fecha.strftime("%Y-%m-%d")
+    fig.update_xaxes(range=[desde, hasta])
+    if ajustar_y:
+        extremos = _extremos(fig, desde, hasta)
+        if extremos is not None:
+            fig.update_layout(yaxis_range=_con_holgura(*extremos, HOLGURA_Y),
+                              meta={"ajustar_y": True})
 
 
 def _escala_fases(n: int) -> list[list[float | str]]:
@@ -188,8 +260,9 @@ def fig_imitador(datos: DatosReporte) -> go.Figure:
             ),
             row=3, col=1,
         )
-    fig.update_layout(template=TEMA, height=440, yaxis3={"range": [0, 1], "title": "probabilidad"})
-    _selector_rango(fig, datos.fecha)
+    fig.update_layout(template=TEMA, height=440, legend_traceorder="normal",
+                      yaxis3={"range": [0, 1], "title": "probabilidad"})
+    _selector_rango(fig, datos.fecha, ajustar_y=False)  # the strips and [0, 1] stay fixed
     return fig
 
 
@@ -208,6 +281,7 @@ def fig_motores_hoy(datos: DatosReporte) -> go.Figure:
             x=[base, *valores, 0.0],
             text=[f"{base:+.2f}", *(f"{v:+.2f}" for v in valores), f"{total:+.2f}"],
             textposition="outside",
+            cliponaxis=False,
             increasing={"marker": {"color": color_fase(fase)}},
             # negatives hollow-ish (light fill, grey outline), the reading solid MARCA
             decreasing={"marker": {"color": _rgba(GRIS, 0.3),
@@ -216,8 +290,11 @@ def fig_motores_hoy(datos: DatosReporte) -> go.Figure:
             connector={"line": {"color": EJE}},
         )
     )
+    puntos = [0.0, base, *(base + sum(valores[: i + 1]) for i in range(len(valores)))]
     fig.update_layout(template=TEMA, hovermode="closest", yaxis={"autorange": "reversed"},
-                      xaxis_title=f"log-odds de {datos.nombres[fase]}", margin={"l": 230})
+                      xaxis={"title": f"log-odds de {datos.nombres[fase]}",
+                             "range": _con_holgura(min(puntos), max(puntos), HOLGURA_TEXTO)},
+                      margin={"l": 230, "r": 24})
     return fig
 
 
@@ -233,12 +310,15 @@ def fig_variables_hoy(datos: DatosReporte) -> go.Figure:
             marker={"color": [color_fase(fase) if a >= 0 else GRIS for a in aportes]},
             text=[f"{a:+.2f}" for a in aportes],
             textposition="outside",
+            cliponaxis=False,
             hovertemplate="%{y}: %{x:+.2f}<extra></extra>",
         )
     )
     fig.update_layout(template=TEMA, hovermode="closest", height=300,
-                      yaxis={"autorange": "reversed"}, margin={"l": 260},
-                      xaxis_title="contribución SHAP (log-odds)")
+                      yaxis={"autorange": "reversed"}, margin={"l": 260, "r": 24},
+                      xaxis={"title": "contribución SHAP (log-odds)",
+                             "range": _con_holgura(min(0.0, *aportes), max(0.0, *aportes),
+                                                   HOLGURA_TEXTO)})
     return fig
 
 
@@ -271,8 +351,8 @@ def fig_motores_tiempo(datos: DatosReporte) -> go.Figure:
             )
         )
     _sombrear_fases(fig, datos.episodios)
-    fig.update_layout(template=TEMA, height=420, yaxis_title="log-odds de la fase del día")
-    _selector_rango(fig, datos.fecha)
+    fig.update_layout(template=TEMA, height=440, yaxis_title="log-odds de la fase del día")
+    _selector_rango(fig, datos.fecha, filas_leyenda=2)
     return fig
 
 
@@ -393,8 +473,11 @@ def fig_transiciones(datos: DatosReporte) -> go.Figure:
         for hacia, celda in zip(datos.nombres, fila_texto, strict=True):
             fig.add_annotation(x=hacia, y=desde, text=celda, showarrow=False)
     fig.update_layout(template=TEMA, height=340, hovermode="closest",
-                      xaxis={"title": "fase siguiente", "side": "top"},
-                      yaxis={"title": "desde", "autorange": "reversed"})
+                      margin={"t": 72, "l": 24},  # automargin grows them to fit the labels
+                      xaxis={"title": {"text": "fase siguiente", "standoff": 10}, "side": "top",
+                             "automargin": True},
+                      yaxis={"title": {"text": "desde", "standoff": 10},
+                             "autorange": "reversed", "automargin": True})
     return fig
 
 

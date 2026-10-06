@@ -33,20 +33,30 @@ NOTA_MOTORES = (
     "Cada día explica su propia fase (log-odds); cuando cambia la fase, cambia lo que se explica."
 )
 GUION = "-"
+MIN_EPISODIOS_BANDA = 4  # below this, quartiles of the finished episodes say little
+NOTA_POCOS = (
+    "Con menos de 4 episodios terminados no se muestra el rango intercuartil, solo la mediana."
+)
 ANCLAS = (
     "portada", "tasa-10a", "imitador", "motores", "motores-tiempo", "curva", "episodios",
     "transiciones", "macro", "validacion",
 )
 
+# The light palette, also forced when printing. The <html> element carries --acento (the
+# phase hue) and --acento-texto-claro (its darker tone for text on the light paper).
+PALETA_CLARA = (
+    "--papel:#fbfaf7;--tinta:#1d1c1a;--tinta-2:#4a4843;--tinta-3:#77756e;--filete:#d9d6cc;"
+    "--tarjeta:#f3f1ea;--acento-texto:var(--acento-texto-claro)"
+)
 ESTILO = """
-:root{--papel:#fbfaf7;--tinta:#1d1c1a;--tinta-2:#4a4843;--tinta-3:#77756e;--filete:#d9d6cc;
---tarjeta:#f3f1ea}
+:root{{claro}}
 @media (prefers-color-scheme: dark){:root{--papel:#161615;--tinta:#f0efec;--tinta-2:#c3c2b7;
---tinta-3:#898781;--filete:#383835;--tarjeta:#1f1f1d}}
+--tinta-3:#898781;--filete:#383835;--tarjeta:#1f1f1d;--acento-texto:var(--acento)}}
 *{box-sizing:border-box}
 body{margin:0;background:var(--papel);color:var(--tinta);
 font:16px/1.6 "Segoe UI",Helvetica,Arial,sans-serif}
-.filete{height:6px;background:var(--acento)}
+.filete{height:6px;background:var(--acento);print-color-adjust:exact;
+-webkit-print-color-adjust:exact}
 .marco{display:grid;grid-template-columns:200px minmax(0,1fr);gap:48px;max-width:1220px;
 margin:0 auto;padding:32px 24px}
 nav{position:sticky;top:24px;align-self:start;font-size:14px}
@@ -55,7 +65,7 @@ border-left:2px solid var(--filete)}
 nav a:hover{color:var(--tinta);border-left-color:var(--acento)}
 main{min-width:0;max-width:920px}
 h1,h2{font-family:Georgia,Cambria,"Times New Roman",serif;font-weight:400;line-height:1.2}
-h1{font-size:56px;margin:8px 0 4px;color:var(--acento)}
+h1{font-size:56px;margin:8px 0 4px;color:var(--acento-texto)}
 h2{font-size:26px;margin:4px 0 12px}
 .meta,.kicker{font-size:13px;color:var(--tinta-3);margin:0}
 .titular{font-family:Georgia,Cambria,serif;font-size:28px;line-height:1.25;margin:8px 0 16px}
@@ -63,7 +73,8 @@ section{padding:40px 0;border-top:1px solid var(--filete)}
 section#portada{border-top:0;padding-top:8px}
 ul.vinetas{list-style:none;padding:0;margin:0 0 16px}
 ul.vinetas li{padding:2px 0}
-ul.vinetas li::before{content:"\\25C6";color:var(--acento);margin-right:10px;font-size:12px}
+ul.vinetas li::before{content:"\\25C6";color:var(--acento-texto);margin-right:10px;
+font-size:12px}
 .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:16px;
 margin:24px 0}
 .kpi{border-top:2px solid var(--tinta);padding-top:8px}
@@ -73,14 +84,16 @@ margin:24px 0}
 .termometro .pista{position:relative;height:14px;background:var(--tarjeta);border-radius:4px}
 .termometro .banda{position:absolute;top:0;height:100%;background:var(--acento);opacity:.28}
 .termometro .mediana{position:absolute;top:0;width:2px;height:100%;background:var(--tinta-2)}
-.termometro .hoy{position:absolute;top:-4px;width:10px;height:22px;background:var(--acento);
+.termometro .hoy{position:absolute;top:-4px;width:10px;height:22px;
+background:var(--acento-texto);
 border-radius:3px;transform:translateX(-50%)}
 .termometro .escala{display:flex;justify-content:space-between;font-size:12px;
 color:var(--tinta-3);margin-top:6px}
-.aviso{display:inline-block;font-size:13px;padding:2px 8px;border:1px solid var(--acento);
-border-radius:4px;color:var(--acento);margin-right:8px}
+.aviso{display:inline-block;font-size:13px;padding:2px 8px;
+border:1px solid var(--acento-texto);border-radius:4px;color:var(--tinta);margin-right:8px}
 figure.grafica{margin:24px 0}
 figcaption{font-weight:600;font-size:15px;margin-bottom:6px}
+.bajada{font-size:14px;color:var(--tinta-2);margin:0 0 6px}
 .fuente,.leyenda,.nota{font-size:12px;color:var(--tinta-3);margin:4px 0}
 .leyenda{font-style:italic}
 .par{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:24px}
@@ -96,18 +109,46 @@ footer{font-size:12px;color:var(--tinta-3);padding:32px 0;border-top:1px solid v
 @media (max-width:768px){.marco{grid-template-columns:minmax(0,1fr);gap:16px;padding:16px}
 nav{top:0;z-index:2;background:var(--papel);display:flex;overflow-x:auto;gap:14px;
 padding:8px 0}nav a{border-left:0;white-space:nowrap;padding:4px 0}h1{font-size:40px}
-.titular{font-size:22px}}
-@media print{nav{display:none}.marco{display:block;padding:0}
-figure.grafica,.kpis,.tarjetas{break-inside:avoid}}
-"""
+.titular{font-size:22px}section{scroll-margin-top:48px}}
+@media print{:root{{claro}}nav{display:none}.rangeselector{display:none}
+.marco{display:block;padding:0}figure.grafica,.kpis,.tarjetas{break-inside:avoid}}
+""".replace("{claro}", PALETA_CLARA)
 
-MODO_OSCURO = """
+# Three jobs, no dependencies beyond plotly.js:
+# - dark mode: recolour the font and every y axis's grid (the figures ship light colours,
+#   so a light page needs no relayout on load); printing forces the light colours;
+# - y follows x: in a figure marked layout.meta.ajustar_y (graficas._selector_rango), when
+#   the x range changes (buttons, zoom, autorange) refit yaxis to the points inside it,
+#   stacked areas by their total and with 0, as graficas._extremos does in Python.
+SCRIPT_PAGINA = r"""
 (function(){var q=window.matchMedia('(prefers-color-scheme: dark)');
-function aplicar(){var o=q.matches,t=o?'#c3c2b7':'#4a4843',
-r=o?'rgba(255,255,255,0.10)':'rgba(137,135,129,0.18)';
-document.querySelectorAll('.js-plotly-plot').forEach(function(el){
-Plotly.relayout(el,{'font.color':t,'yaxis.gridcolor':r});});}
-window.addEventListener('load',aplicar);q.addEventListener('change',aplicar);})();
+function graficas(){
+return Array.prototype.slice.call(document.querySelectorAll('.js-plotly-plot'));}
+function colorear(oscuro){var t=oscuro?'#c3c2b7':'#4a4843',
+r=oscuro?'rgba(255,255,255,0.10)':'rgba(137,135,129,0.18)';
+graficas().forEach(function(el){var c={'font.color':t};
+Object.keys(el.layout).forEach(function(k){if(/^yaxis\d*$/.test(k))c[k+'.gridcolor']=r;});
+Plotly.relayout(el,c);});}
+function dia(v){
+return typeof v==='number'?new Date(v).toISOString().slice(0,10):String(v).slice(0,10);}
+function ajustarY(el){var r=el.layout.xaxis.range;if(!r)return;
+var a=dia(r[0]),b=dia(r[1]),lo=Infinity,hi=-Infinity,pilas={},hay=false;
+function ver(y){if(y<lo)lo=y;if(y>hi)hi=y;}
+(el._fullData||el.data).forEach(function(t){if(t.visible===false||!t.x||!t.y)return;
+for(var i=0;i<t.x.length;i++){var x=String(t.x[i]).slice(0,10),y=t.y[i];
+if(x<a||x>b||y===null||y===undefined||isNaN(y))continue;
+if(t.stackgroup){var k=t.stackgroup+' '+x;pilas[k]=(pilas[k]||0)+y;hay=true;}else ver(y);}});
+for(var k in pilas)ver(pilas[k]);if(hay)ver(0);if(lo>hi)return;
+var m=(hi-lo)*0.05||Math.abs(hi)*0.05||1;Plotly.relayout(el,{'yaxis.range':[lo-m,hi+m]});}
+function seguirX(el){if(!(el.layout.meta&&el.layout.meta.ajustar_y))return;
+el.on('plotly_relayout',function(e){for(var k in e){
+if(k.indexOf('xaxis.')===0||k==='yaxis.autorange'){ajustarY(el);return;}}});}
+function redibujar(){graficas().forEach(function(el){Plotly.Plots.resize(el);});}
+function cambio(){colorear(q.matches);}
+window.addEventListener('load',function(){graficas().forEach(seguirX);if(q.matches)colorear(true);});
+if(q.addEventListener)q.addEventListener('change',cambio);else q.addListener(cambio);
+window.addEventListener('beforeprint',function(){colorear(false);redibujar();});
+window.addEventListener('afterprint',function(){cambio();redibujar();});})();
 """
 
 
@@ -117,6 +158,7 @@ class Grafica:
     figura: go.Figure
     fuente: str = FUENTE
     leyenda: str = ""
+    bajada: str = ""  # the chart's own headline, under its title
 
 
 @dataclass(frozen=True)
@@ -165,7 +207,8 @@ def _secciones(datos: DatosReporte, textos: dict[str, Titular]) -> list[Seccion]
                 (Grafica("Curva de Treasuries: hoy y hace 1 mes, 3 meses y 1 año",
                          g.fig_curva(datos)),
                  Grafica("Firma de cada fase: cambio mediano a 1 mes por plazo",
-                         g.fig_firma(datos), leyenda=LEYENDA_PASADO)),
+                         g.fig_firma(datos), leyenda=LEYENDA_PASADO,
+                         bajada=textos["firma"].texto)),
                 par=True),
         Seccion("episodios", "Episodios", textos["episodios"],
                 (Grafica("Fases desde el inicio de la historia", g.fig_franja(datos)),
@@ -185,33 +228,48 @@ def _grafica(numero: int, grafica: Grafica) -> str:
     div = pio.to_html(grafica.figura, full_html=False, include_plotlyjs=False,
                       div_id=f"fig-{numero}", config=CONFIG_PLOTLY)
     leyenda = f'<p class="leyenda">{_e(grafica.leyenda)}</p>' if grafica.leyenda else ""
+    bajada = f'<p class="bajada">{_e(grafica.bajada)}</p>' if grafica.bajada else ""
     return (
         f'<figure class="grafica"><figcaption>{numero}. {_e(grafica.titulo)}</figcaption>'
-        f'{div}{leyenda}<p class="fuente">{_e(grafica.fuente)}</p></figure>'
+        f'{bajada}{div}{leyenda}<p class="fuente">{_e(grafica.fuente)}</p></figure>'
     )
 
 
 def _termometro(posicion: Posicion) -> str:
+    """Today's length on a 0..max scale; the P25-P75 band only with 4+ finished episodes."""
     if posicion.p25 is None or posicion.p75 is None or posicion.mediana is None:
         return (
             '<p class="nota">Sin episodios terminados de esta fase para comparar la duración.</p>'
         )
-    tope = max(float(posicion.dias), posicion.p75) * 1.15
+    con_banda = posicion.episodios >= MIN_EPISODIOS_BANDA
+    tope = max(float(posicion.dias), posicion.p75 if con_banda else posicion.mediana) * 1.15
 
     def pct(valor: float) -> str:
         return f"{100.0 * valor / tope:.1f}%"
 
+    terminados = "episodio terminado" if posicion.episodios == 1 else "episodios terminados"
+    if con_banda:
+        banda = (
+            f'<div class="banda" style="left:{pct(posicion.p25)};'
+            f'width:{pct(posicion.p75 - posicion.p25)}"></div>'
+        )
+        resumen = (
+            f"hoy {posicion.dias} · P25 {posicion.p25:.0f} · mediana {posicion.mediana:.0f}"
+            f" · P75 {posicion.p75:.0f}"
+        )
+        nota = ""
+    else:
+        banda = ""
+        resumen = f"hoy {posicion.dias} · mediana {posicion.mediana:.0f}"
+        nota = f'<p class="nota">{_e(NOTA_POCOS)}</p>'
     return (
-        '<div class="termometro"><p class="meta">Duración del episodio contra los '
-        f"{posicion.episodios} episodios terminados de la misma fase</p>"
-        '<div class="pista">'
-        f'<div class="banda" style="left:{pct(posicion.p25)};'
-        f'width:{pct(posicion.p75 - posicion.p25)}"></div>'
+        '<div class="termometro"><p class="meta">Duración del episodio contra '
+        f"{posicion.episodios} {terminados} de la misma fase</p>"
+        f'<div class="pista">{banda}'
         f'<div class="mediana" style="left:{pct(posicion.mediana)}"></div>'
         f'<div class="hoy" style="left:{pct(posicion.dias)}"></div></div>'
-        f'<div class="escala"><span>0</span><span>P25 {posicion.p25:.0f} · mediana '
-        f"{posicion.mediana:.0f} · P75 {posicion.p75:.0f}</span>"
-        f"<span>hoy {posicion.dias}</span></div></div>"
+        f'<div class="escala"><span>0</span><span>{_e(resumen)}</span>'
+        f"<span>{tope:.0f} días</span></div>{nota}</div>"
     )
 
 
@@ -276,8 +334,7 @@ def _seccion(seccion: Seccion, primero: int) -> tuple[str, int]:
 def _validacion(datos: DatosReporte) -> str:
     validacion = datos.lectura["validation"]
     veredictos = " · ".join(
-        f"{_e(v['stage'])}: {_e(str(v['verdict']).upper())}"
-        for v in validacion["registered_verdicts"]
+        f"{v['stage']}: {str(v['verdict']).upper()}" for v in validacion["registered_verdicts"]
     )
     sombra = validacion["sombra"]
     faltan = int(sombra["proxima_evaluacion_semanas"])
@@ -288,7 +345,8 @@ def _validacion(datos: DatosReporte) -> str:
         ("Próxima evaluación de sombra", proxima),
     )
     cajas = "".join(
-        f'<div class="tarjeta"><div class="meta">{_e(e)}</div><div class="valor">{v}</div></div>'
+        f'<div class="tarjeta"><div class="meta">{_e(e)}</div>'
+        f'<div class="valor">{_e(v)}</div></div>'
         for e, v in tarjetas
     )
     filas = "".join(
@@ -314,16 +372,16 @@ def _comentario(datos: DatosReporte) -> str:
     if datos.comentario is None:
         return ""
     return (
-        '<section id="comentario"><p class="kicker">Comentario del analista '
-        "(no generado por TERMO)</p>"
-        f"{md_to_html(datos.comentario)}</section>"
+        '<section id="comentario"><p class="kicker">Comentario (no generado por TERMO)</p>'
+        f"<h2>Comentario del analista</h2>{md_to_html(datos.comentario)}</section>"
     )
 
 
 def render(datos: DatosReporte, generado: str) -> str:
     """The page as one string: plotly.js once, then the cover and every block."""
     textos = titulares(datos)
-    acento = g.color_fase(int(datos.lectura["phase"]))
+    fase = int(datos.lectura["phase"])
+    acento = f"--acento:{g.color_fase(fase)};--acento-texto-claro:{g.color_texto_fase(fase)}"
     numero = 1
     cuerpos: list[str] = [_portada(datos, textos["portada"])]
     indice = [("portada", "Portada")]
@@ -346,7 +404,7 @@ def render(datos: DatosReporte, generado: str) -> str:
     return "\n".join(
         [
             "<!doctype html>",
-            f'<html lang="es" style="--acento:{acento}">',
+            f'<html lang="es" style="{acento}">',
             "<head>",
             '<meta charset="utf-8">',
             '<meta name="viewport" content="width=device-width, initial-scale=1">',
@@ -357,10 +415,10 @@ def render(datos: DatosReporte, generado: str) -> str:
             "<body>",
             '<div class="filete"></div>',
             '<div class="marco">',
-            f"<nav>{nav}</nav>",
+            f'<nav aria-label="Índice">{nav}</nav>',
             f"<main>{''.join(cuerpos)}{pie}</main>",
             "</div>",
-            f"<script>{MODO_OSCURO}</script>",
+            f"<script>{SCRIPT_PAGINA}</script>",
             "</body>",
             "</html>",
             "",
